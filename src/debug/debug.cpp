@@ -30,6 +30,7 @@
 #include <iomanip>
 #include <string>
 #include <sstream>
+#include <thread>
 using namespace std;
 
 #include "debug.h"
@@ -43,6 +44,7 @@ using namespace std;
 #include "mapper.h"
 #include "pc98_gdc.h"
 #include "callback.h"
+#include "gdbserver.h"
 #include "inout.h"
 #include "paging.h"
 #include "shell.h"
@@ -169,6 +171,8 @@ static void OutputVecTable(char* filename);
 static void DrawVariables(void);
 static void LogDOSKernMem(void);
 static void LogBIOSMem(void);
+
+static GDBServer* gdbServer;
 
 extern int debuggerrun;
 int debugrunmode=0;
@@ -382,7 +386,7 @@ static char* F80ToString(int regIndex, char* dest) {
 #else
 	snprintf(dest, 11, "%08.2f", fpu.regs[regIndex].d);
 #endif
-	
+
 	return dest;
 }
 
@@ -390,7 +394,7 @@ static bool F80TestUpdate(int regIndex) {
 	if(fpu.sw.top != oldfpu.sw.top) { /* If the top changed then all registers rotated places, thus updated. */
 		return true;
 	}
-	
+
 #if C_FPU_X86
 	return !(fpu.p_regs[regIndex].m1 == oldfpu.p_regs[regIndex].m1 && fpu.p_regs[regIndex].m2 == oldfpu.p_regs[regIndex].m2 && fpu.p_regs[regIndex].m3 == oldfpu.p_regs[regIndex].m3);
 #elif defined(HAS_LONG_DOUBLE)
@@ -536,7 +540,7 @@ public:
 	void					SetOnce			(bool _once)				{ once = _once; };
 	void					SetType			(EBreakpoint _type)			{ type = _type; };
 	void					SetValue		(uint8_t value)				{ ahValue = value; };
-	void					SetOther		(uint8_t other)				{ alValue = other; };	
+	void					SetOther		(uint8_t other)				{ alValue = other; };
 
 	bool					IsActive		(void)						{ return active; };
 	void					Activate		(bool _active);
@@ -740,7 +744,7 @@ bool CBreakpoint::CheckBreakpoint(uint16_t seg, uint32_t off)
 					if (desc.GetLimit()==0) return false;
 				}
 
-				Bitu address; 
+				Bitu address;
 				if (bp->GetType()==BKPNT_MEMORY_LINEAR) address = bp->GetOffset();
 				else address = (Bitu)GetAddress(bp->GetSegment(),bp->GetOffset());
 				uint8_t value=0;
@@ -948,7 +952,7 @@ static bool StepOver()
 		DrawCode();
 		mainMenu.get_item("mapper_debugger").check(false).refresh_item(mainMenu);
 		return true;
-	} 
+	}
 	return false;
 }
 
@@ -978,7 +982,7 @@ static void DrawData(void) {
 	uint64_t address;
 	int w,h,y;
 
-	/* Data win */	
+	/* Data win */
 	getmaxyx(dbg.win_data,h,w);
 
 	if ((paging.enabled || cpu.pmode) && dbg.data_view != DBGBlock::DATV_PHYSICAL) h--;
@@ -1097,7 +1101,7 @@ void DrawRegistersUpdateOld(void) {
 	oldsegs[gs].val=SegValue(gs);
 	oldsegs[ss].val=SegValue(ss);
 	oldsegs[cs].val=SegValue(cs);
-	
+
 	oldfpu = fpu; /* Slow? */
 
 	/*Individual flags*/
@@ -1132,17 +1136,17 @@ static void DrawRegisters(void) {
 	SetColor(SegValue(gs)!=oldsegs[gs].val);mvwprintw (dbg.win_reg,0,61,"%04X",SegValue(gs));
 	SetColor(SegValue(ss)!=oldsegs[ss].val);mvwprintw (dbg.win_reg,0,71,"%04X",SegValue(ss));
 	SetColor(SegValue(cs)!=oldsegs[cs].val);mvwprintw (dbg.win_reg,1,31,"%04X",SegValue(cs));
-	
+
 	char x87buf[12] = {};
 	SetColor(F80TestUpdate(STV(0)));mvwprintw (dbg.win_reg,4,4,"%s", F80ToString(STV(0), x87buf));
 	SetColor(F80TestUpdate(STV(4)));mvwprintw (dbg.win_reg,5,4,"%s", F80ToString(STV(4), x87buf));
-	
+
 	SetColor(F80TestUpdate(STV(1)));mvwprintw (dbg.win_reg,4,18,"%s", F80ToString(STV(1), x87buf));
 	SetColor(F80TestUpdate(STV(5)));mvwprintw (dbg.win_reg,5,18,"%s", F80ToString(STV(5), x87buf));
-	
+
 	SetColor(F80TestUpdate(STV(2)));mvwprintw (dbg.win_reg,4,32,"%s", F80ToString(STV(2), x87buf));
 	SetColor(F80TestUpdate(STV(6)));mvwprintw (dbg.win_reg,5,32,"%s", F80ToString(STV(6), x87buf));
-	
+
 	SetColor(F80TestUpdate(STV(3)));mvwprintw (dbg.win_reg,4,46,"%s", F80ToString(STV(3), x87buf));
 	SetColor(F80TestUpdate(STV(7)));mvwprintw (dbg.win_reg,5,46,"%s", F80ToString(STV(7), x87buf));
 
@@ -1260,7 +1264,7 @@ static void DrawInput(void) {
         mvwchgat(dbg.win_inp,10,0,3,0,(PAIR_BLACK_GREY),NULL);
         if (*curPtr) {
             mvwchgat(dbg.win_inp,0,(int)(curPtr-dispPtr+4),1,0,(PAIR_BLACK_GREY),NULL);
-        } 
+        }
     }
 
     wattrset(dbg.win_inp,0);
@@ -1335,7 +1339,7 @@ static void DrawCode(void) {
 		mvwprintw(dbg.win_code,i,0,"%04X:%08X ",codeViewData.useCS,disEIP);
 
 		if (drawsize>10) { toolarge = true; drawsize = 9; }
- 
+
         if (start != mem_no_address) {
             for (Bitu c=0;c<drawsize;c++) {
                 uint8_t value;
@@ -2032,7 +2036,7 @@ bool ParseCommand(char* str) {
         DEBUG_ShowMsg("%s",cpptmp.c_str());
         return true;
     }
-	
+
 	if (command == "ADDLOG") {
 		if(found && *found)	DEBUG_ShowMsg("NOTICE: %s\n",found);
 		return true;
@@ -2264,7 +2268,7 @@ bool ParseCommand(char* str) {
         DEBUG_EndPagedContent();
 		return true;
 	}
-    
+
     if (command == "FM") { // Freeze memory value at address
 		uint16_t seg = (uint16_t)GetHexValue(found,found);found++; // skip ":"
 		uint32_t ofs = GetHexValue(found,found);
@@ -2272,7 +2276,7 @@ bool ParseCommand(char* str) {
 		CBreakpoint* bp = CBreakpoint::AddMemBreakpoint(seg,ofs);
         Bitu address = (Bitu)GetAddress(bp->GetSegment(),bp->GetOffset());
 		mem_readb_checked((PhysPt)address,&value);
-        if (bp){ 
+        if (bp){
             bp->SetType(BKPNT_MEMORY_FREEZE);
             bp->SetValue(value);
         }
@@ -2281,7 +2285,7 @@ bool ParseCommand(char* str) {
 	}
 
 	if (command == "BPDEL") { // Delete Breakpoints
-		uint8_t bpNr	= (uint8_t)GetHexValue(found,found); 
+		uint8_t bpNr	= (uint8_t)GetHexValue(found,found);
 		if ((bpNr==0x00) && (*found=='*')) { // Delete all
 			CBreakpoint::DeleteAll();
 			Clear_SYSENTER_Debug();
@@ -2319,7 +2323,7 @@ bool ParseCommand(char* str) {
 		mainMenu.get_item("debugger_runnormal").check(true).refresh_item(mainMenu);
 		mainMenu.get_item("debugger_runwatch").check(false).refresh_item(mainMenu);
 
-		DOSBOX_SetNormalLoop();	
+		DOSBOX_SetNormalLoop();
 		GFX_SetTitle(-1,-1,-1,is_paused);
 		return true;
 	}
@@ -2488,7 +2492,7 @@ bool ParseCommand(char* str) {
 
 		debugging = false;
 		CBreakpoint::ActivateBreakpointsExceptAt(SegPhys(cs)+reg_eip);
-		DOSBOX_SetNormalLoop();	
+		DOSBOX_SetNormalLoop();
 		return true;
 	}
 
@@ -3580,7 +3584,7 @@ bool ParseCommand(char* str) {
 	}
 
 	if(command == "TIMERIRQ") { //Start a timer irq
-		DEBUG_RaiseTimerIrq(); 
+		DEBUG_RaiseTimerIrq();
 		DEBUG_ShowMsg("Debug: Timer Int started.\n");
 		return true;
 	}
@@ -3867,7 +3871,7 @@ char* AnalyzeInstruction(char* inst, bool saveSelector) {
 		case 'M' :	{	jmp = true; // JMP
 					}	break;
 		case 'N' :	{	switch (instu[2]) {
-						case 'B' :	
+						case 'B' :
 						case 'C' :	{	jmp = get_CF()?false:true;	// JNB / JNC
 									}	break;
 						case 'E' :	{	jmp = get_ZF()?false:true;	// JNE
@@ -3999,11 +4003,10 @@ int32_t DEBUG_Run(int32_t amount,bool quickexit) {
 	return ret;
 }
 
-uint32_t DEBUG_CheckKeys(void) {
+uint32_t DEBUG_CheckKeys(int key) {
 	Bits ret=0;
 	bool numberrun = false;
 	bool skipDraw = false;
-	int key=getch();
 
     if (key == KEY_RESIZE) {
 #ifdef WIN32 /* BUG: pdcurses notifies us immediately upon getting a resize event but does not update it's
@@ -4031,7 +4034,7 @@ uint32_t DEBUG_CheckKeys(void) {
         DEBUG_DrawScreen();
         return 0;
     }
-	
+
 	if (key >='0' && key <='5' && strlen(codeViewData.inputStr) == 0) {
 		const int32_t v[] ={1,5,500,1000,5000,10000};
 
@@ -4191,7 +4194,7 @@ uint32_t DEBUG_CheckKeys(void) {
                         break;
                 }
                 break;
-        case KEY_UP:	// up 
+        case KEY_UP:	// up
                 switch (dbg.active_win) {
                     case DBGBlock::WINI_CODE:
                         win_code_ui_up(1);
@@ -4350,7 +4353,7 @@ uint32_t DEBUG_CheckKeys(void) {
 				break;
 		case KEY_BACKSPACE: //backspace (linux)
 		case 0x7f:	// backspace in some terminal emulators (linux)
-		case 0x08:	// delete 
+		case 0x08:	// delete
 				if (codeViewData.inputPos == 0) break;
 				codeViewData.inputPos--;
 				// fallthrough
@@ -4385,7 +4388,7 @@ uint32_t DEBUG_CheckKeys(void) {
 		}
 		if (ret<0) return (uint32_t)ret;
 		if (ret>0) {
-			if (GCC_UNLIKELY(ret >= (Bits)CB_MAX)) 
+			if (GCC_UNLIKELY(ret >= (Bits)CB_MAX))
 				ret = 0;
 			else
 				ret = (Bits)(*CallBack_Handlers[ret])();
@@ -4505,7 +4508,7 @@ Bitu DEBUG_Loop(void) {
             DEBUG_RefreshPage(0);
         }
 
-    	return DEBUG_CheckKeys();
+    	return DEBUG_CheckKeys(getch());
     }
 }
 
@@ -4558,7 +4561,7 @@ void DEBUG_Enable_Handler(bool pressed) {
         DEBUG_DrawScreen();
 
         CBreakpoint::ActivateBreakpointsExceptAt(SegPhys(cs)+reg_eip);
-        DOSBOX_SetNormalLoop();	
+        DOSBOX_SetNormalLoop();
         GFX_SetTitle(-1,-1,-1,is_paused);
 //      if (tohide) return;
     }
@@ -4591,6 +4594,11 @@ void DEBUG_Enable_Handler(bool pressed) {
 
     LoopHandler *ol = DOSBOX_GetLoop();
     if (ol != DEBUG_Loop) old_loop = ol;
+
+    if (!debugging) {
+        printf("Breakpoint hit! Entering debugger.\n");
+        gdbServer->signal_breakpoint();
+    }
 
     debugging=true;
     debug_running=false;
@@ -5283,7 +5291,7 @@ void DEBUG_SetupConsole(void) {
 		WIN32_Console();
 #else
 		tcgetattr(0,&consolesettings);
-#endif	
+#endif
 		//	dbg.active_win=3;
 		/* Start the Debug Gui */
 		DBGUI_StartUp();
@@ -5321,8 +5329,9 @@ void DEBUG_ReinitCallback(void) {
 
 void DEBUG_Init() {
     LOG(LOG_MISC, LOG_DEBUG)("Initializing debug system");
+    DEBUG_InitGDBStub(2159);
 
-	/* Reset code overview and input line */
+    /* Reset code overview and input line */
 	memset((void*)&codeViewData,0,sizeof(codeViewData));
 	/* Setup callback */
 	debugCallback=CALLBACK_Allocate();
@@ -5713,7 +5722,108 @@ void DEBUG_StopLog(void) {
 
 #endif // HEAVY DEBUG
 
+uint32_t DEBUG_GetRegister(int reg) {
+     switch(reg) {
+         case 0: return reg_eax;
+         case 1: return reg_ecx;
+         case 2: return reg_edx;
+         case 3: return reg_ebx;
+         case 4: return reg_esp;
+         case 5: return reg_ebp;
+         case 6: return reg_esi;
+         case 7: return reg_edi;
+         case 8: return SegPhys(cs)+reg_eip;
+         case 9: return reg_flags;
+         case 10: return SegValue(cs);
+         case 11: return SegValue(ss);
+         case 12: return SegValue(ds);
+         case 13: return SegValue(es);
+         case 14: return SegValue(fs);
+         case 15: return SegValue(gs);
+         default: return 0;
+     }
+ }
+
+ void DEBUG_SetRegister(int reg, uint32_t value) {
+     switch(reg) {
+         case 0: reg_eax = value; break;
+         case 1: reg_ecx = value; break;
+         case 2: reg_edx = value; break;
+         case 3: reg_ebx = value; break;
+         case 4: reg_esp = value; break;
+         case 5: reg_ebp = value; break;
+         case 6: reg_esi = value; break;
+         case 7: reg_edi = value; break;
+         case 8: reg_eip = value; break;
+         case 9: reg_flags = value; break;
+         case 10: SegSet16(cs, value); break;
+         case 11: SegSet16(ss, value); break;
+         case 12: SegSet16(ds, value); break;
+         case 13: SegSet16(es, value); break;
+         case 14: SegSet16(fs, value); break;
+         case 15: SegSet16(gs, value); break;
+     }
+ }
+
+ uint8_t DEBUG_ReadMemory(uint32_t address) {
+     uint8_t value;
+     if (mem_readb_checked(address, &value)) {
+         // Memory read failed
+         return 0;
+     }
+     return value;
+ }
+
+ void DEBUG_WriteMemory(uint32_t address, uint8_t value) {
+     mem_writeb_checked(address, value);
+ }
+
+ void DEBUG_Step() {
+    DEBUG_CheckKeys(KEY_F(11));
+    gdbServer->signal_breakpoint();
+    return;
+ }
+
+ void DEBUG_Continue() {
+     DEBUG_CheckKeys(KEY_F(5));
+     return;
+
+
+     exitLoop = false;
+     debugging = false;
+     CBreakpoint::ActivateBreakpoints();
+     DOSBOX_SetNormalLoop();
+     return;
+ }
+
+ #define FP_SEG(x) (uint16_t)((uint32_t)(x) >> 16)
+ #define FP_OFF(x) (uint16_t)((uint32_t)(x))
+ bool DEBUG_SetBreakpoint(uint32_t address) {
+     uint16_t seg = FP_SEG(address);
+     uint16_t off = FP_OFF(address);
+     DEBUG_ShowMsg("Adding Breakpoint %x:%x", seg, off);
+     return CBreakpoint::AddBreakpoint(seg, off, false);
+ }
+
+ bool DEBUG_RemoveBreakpoint(uint32_t address) {
+     uint16_t seg = address >> 16;
+     uint16_t off = address;
+     DEBUG_ShowMsg("Removing Breakpoint %x:%x", seg, off);
+     return CBreakpoint::DeleteBreakpoint(seg, off);
+ }
+
+ // Add this function to handle GDB server initialization
+ void DEBUG_InitGDBStub(int port) {
+     // This function should be called from dosbox.cpp when the -gdb option is used
+     gdbServer = new GDBServer(port);
+
+     // Run the GDB server in a separate thread
+     std::thread gdbThread([gdbServer]() {
+         gdbServer->run();
+     });
+
+     gdbThread.detach();  // Let the thread run independently
+ }
+
 
 #endif // DEBUG
-
-
