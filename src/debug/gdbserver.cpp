@@ -2,6 +2,7 @@
  #include <mutex>
  #include <queue>
  #include "gdbserver.h"
+ #include "keyboard.h"
  #include "logging.h"
 
  static std::queue<std::string> async_events;
@@ -114,7 +115,8 @@
                             "swbreak+;"  // Software breakpoints
                             "hwbreak+;"  // Hardware breakpoints
                             "vContSupported+;" // vCont packet for continuing and stepping
-                            "QStartNoAckMode+"; // no ack mode
+                            "QStartNoAckMode+" // no ack mode
+                            "keyboard+"; // Advertise keyboard support
      send_packet(response);
      DEBUG_ShowMsg("GDBServer: Sent supported features - %s", response.c_str());
 
@@ -233,6 +235,10 @@
          handle_read_memory(cmd.substr(1));
      } else if (cmd.substr(0, 1) == "M") {
          handle_write_memory(cmd.substr(1));
+     } else if (cmd.substr(0, 1) == "k") {
+        handle_read_keyboard(cmd.substr(1));
+     } else if (cmd.substr(0, 1) == "K") {
+        handle_write_keyboard(cmd.substr(1));
      } else if (cmd.substr(0, 1) == "Z" || cmd.substr(0, 1) == "z") {
          handle_breakpoint(cmd);
      } else if (cmd.substr(0, 1) == "s") {
@@ -360,6 +366,65 @@
 
      for (uint32_t i = 0; i < length && i < data.length(); ++i) {
          DEBUG_WriteMemory(address + i, data[i]);
+     }
+
+     send_packet("OK");
+ }
+
+ void GDBServer::handle_read_keyboard(const std::string& args) {
+     // Check if there are pending keystrokes
+     uint16_t keystroke = 0;//DEBUG_GetKeystroke(); // Returns scancode+ascii or 0 if none
+
+     if (keystroke == 0) {
+         send_packet("00"); // No key available
+     } else {
+         std::stringstream ss;
+         ss << std::hex << std::setfill('0') << std::setw(4) << keystroke;
+         send_packet(ss.str());
+     }
+ }
+ void GDBServer::handle_write_keyboard(const std::string& args) {
+     // Enhanced format: "code1,state1;code2,state2;..."
+     // Or simple: "code1;code2;code3" (auto press+release each)
+
+     if (args.empty()) {
+         send_packet("E01");
+         return;
+     }
+
+     std::stringstream ss(args);
+     std::string key_event;
+
+     while (std::getline(ss, key_event, ';')) {
+         if (key_event.empty()) continue;
+
+         size_t comma = key_event.find(',');
+         if (comma == std::string::npos) {
+             // Simple format: just key code, do press+release
+             uint8_t kbd_code = std::stoul(key_event, nullptr, 16);
+
+             // Validate against enum bounds
+             if (kbd_code >= KBD_LAST) {
+                 send_packet("E02"); // Invalid key code
+                 return;
+             }
+
+             KBD_KEYS keytype = static_cast<KBD_KEYS>(kbd_code);
+             KEYBOARD_AddKey(keytype, true);   // Press
+             KEYBOARD_AddKey(keytype, false);  // Release
+         } else {
+             // Full format: code,state
+             uint8_t kbd_code = std::stoul(key_event.substr(0, comma), nullptr, 16);
+             uint8_t state = std::stoul(key_event.substr(comma + 1), nullptr, 16);
+             // Validate against enum bounds
+             if (kbd_code >= KBD_LAST) {
+                 send_packet("E02"); // Invalid key code
+                 return;
+             }
+
+             KBD_KEYS keytype = static_cast<KBD_KEYS>(kbd_code);
+             KEYBOARD_AddKey(keytype, state != 0);
+         }
      }
 
      send_packet("OK");

@@ -45,6 +45,8 @@ private:
     void handle_write_registers(const std::string& args);
     void handle_read_memory(const std::string& args);
     void handle_write_memory(const std::string& args);
+    void handle_read_keyboard(const std::string& args);
+    void handle_write_keyboard(const std::string& args);
     void handle_step();
     void handle_continue();
     void handle_breakpoint(const std::string& args);
