@@ -37,6 +37,13 @@
 
 #include <output/output_ttf.h>
 
+#define DOSBOX_INCLUDE
+#include "iglib.h"
+
+void dosbox_integration_trigger_write_direct32(const uint32_t reg,const uint32_t val);
+bool dosbox_int_push_save_state(void);
+bool dosbox_int_pop_save_state(void);
+
 #define SEQ_REGS 0x05
 #define GFX_REGS 0x09
 #define ATT_REGS 0x15
@@ -391,13 +398,12 @@ VideoModeBlock ModeList_VGA_Tseng[]={
 { 0x011  ,M_EGA    ,640 ,480 ,80 ,30 ,8 ,16 ,1 ,0xA0000 ,0xA000 ,100 ,525 ,80 ,480 ,0, 0},
 { 0x012  ,M_EGA    ,640 ,480 ,80 ,30 ,8 ,16 ,1 ,0xA0000 ,0xA000 ,100 ,525 ,80 ,480 ,0, 0},
 { 0x013  ,M_VGA    ,320 ,200 ,40 ,25 ,8 ,8  ,1 ,0xA0000 ,0x2000 ,100 ,449 ,80 ,400 ,_REPEAT1, 0},
-
-{ 0x018  ,M_TEXT   ,1056 ,688, 132,44, 8, 8, 1 ,0xB0000 ,0x4000, 192, 800, 132, 704, 0, 0},
-{ 0x019  ,M_TEXT   ,1056 ,400, 132,25, 8, 16,1 ,0xB0000 ,0x2000, 192, 449, 132, 400, 0, 0},
-{ 0x01A  ,M_TEXT   ,1056 ,400, 132,28, 8, 16,1 ,0xB0000 ,0x2000, 192, 449, 132, 448, 0, 0},
-{ 0x022  ,M_TEXT   ,1056 ,688, 132,44, 8, 8, 1 ,0xB8000 ,0x4000, 192, 800, 132, 704, 0, 0},
-{ 0x023  ,M_TEXT   ,1056 ,400, 132,25, 8, 16,1 ,0xB8000 ,0x2000, 192, 449, 132, 400, 0, 0},
-{ 0x024  ,M_TEXT   ,1056 ,400, 132,28, 8, 16,1 ,0xB8000 ,0x2000, 192, 449, 132, 448, 0, 0},
+{ 0x018  ,M_TEXT   ,1056 ,352, 132,44, 8, 8, 1 ,0xB0000 ,0x4000, 166, 428, 132, 352, 0, 0},
+{ 0x019  ,M_TEXT   ,1056 ,350, 132,25, 8, 14,1 ,0xB0000 ,0x2000, 166, 428, 132, 350, 0, 0},
+{ 0x01A  ,M_TEXT   ,1056 ,364, 132,28, 8, 13,1 ,0xB0000 ,0x2000, 192, 429, 132, 364, 0, 0},
+{ 0x022  ,M_TEXT   ,1056 ,352, 132,44, 8, 8, 1 ,0xB8000 ,0x4000, 166, 428, 132, 352, 0, 0},
+{ 0x023  ,M_TEXT   ,1056 ,350, 132,25, 8, 14,1 ,0xB8000 ,0x2000, 166, 428, 132, 350, 0, 0},
+{ 0x024  ,M_TEXT   ,1056 ,364, 132,28, 8, 13,1 ,0xB8000 ,0x2000, 192, 429, 132, 364, 0, 0},
 { 0x025  ,M_LIN4   ,640 ,480 ,80 ,30 ,8 ,16 ,1 ,0xA0000 ,0xA000 ,100 ,525 ,80 ,480 , 0, 0},
 { 0x029  ,M_LIN4   ,800 ,600 ,100,37 ,8 ,16 ,1 ,0xA0000 ,0xA000, 128 ,663 ,100,600 , 0, 0},
 { 0x02D  ,M_LIN8   ,640 ,350 ,80 ,21 ,8 ,16 ,1 ,0xA0000 ,0x10000,100 ,449 ,80 ,350 , 0, 0},
@@ -1316,6 +1322,13 @@ bool INT10_SetVideoMode(uint16_t mode) {
 	}
 
 	if (IS_VGA_ARCH && svgaCard == SVGA_None && mode > 0x13) return false; /* Standard VGA does not have anything above 0x13 */
+
+	if (IS_VGA_ARCH && svgaCard == SVGA_DOSBoxIG) {
+		/* switch off Integration Graphics */
+		dosbox_int_push_save_state();
+		dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_CTL,0);
+		dosbox_int_pop_save_state();
+	}
 
 	if (unmask_irq0_on_int10_setmode) {
 		/* setting the video mode unmasks certain IRQs as a matter of course */
@@ -2483,7 +2496,7 @@ Bitu VideoModeMemSize(Bitu mode) {
 	        return ~0ul;
 
 	switch(vmodeBlock->type) {
-    case M_PACKED4:
+        case M_PACKED4:
 		if (mode >= 0x100 && !(mode >= 0x202 && mode <= 0x208)/*S3 Windows 95 driver needs these*/ && !allow_vesa_4bpp_packed) return ~0ul;
 		return vmodeBlock->swidth*vmodeBlock->sheight/2;
 	case M_LIN4:

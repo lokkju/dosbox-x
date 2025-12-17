@@ -79,6 +79,9 @@ Bitu vga_read_p3d4(Bitu port,Bitu iolen) {
 }
 
 void vga_write_p3d5(Bitu port,Bitu val,Bitu iolen) {
+	if (vga.dosboxig.vga_reg_lockout)
+		return;
+
     (void)port;//UNUSED
 //	if((crtc(index)!=0xe)&&(crtc(index)!=0xf)) 
 //		LOG_MSG("CRTC w #%2x val %2x",crtc(index),val);
@@ -366,14 +369,9 @@ void vga_write_p3d5(Bitu port,Bitu val,Bitu iolen) {
 		if (vga_render_on_demand) VGA_RenderOnDemandUpTo();
 		crtc(mode_control)=(uint8_t)val;
 		vga.tandy.line_mask = (~val) & 3u;
-
-		if ( vga.tandy.line_mask ) {
-			vga.tandy.line_shift = 13u;
-			vga.tandy.addr_mask = (1u << 13u) - 1u;
-		} else {
-			vga.tandy.addr_mask = ~0u;
-			vga.tandy.line_shift = 0;
-		}
+		vga.tandy.line_shift = vga.tandy.line_mask ? 13u : 0u;
+		vga.tandy.addr_mask = ~0u;
+		vga.tandy.addr_mask &= ~(vga.tandy.line_mask << 13u);
 
 		VGA_CheckAddrShift();
 		VGA_CheckScanLength();

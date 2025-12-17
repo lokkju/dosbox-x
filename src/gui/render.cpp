@@ -511,7 +511,7 @@ void RENDER_Reset( void ) {
 		goto forcenormal;
 
 	if(render.scale.prompt && (!dblh || !dblw) && !((dblh || dblw) && !render.scale.hardware) && scalerOpTV != render.scale.op && scaler != "none" && strncasecmp(scaler.c_str(), "normal", 6) && !render.scale.forced && sdl.desktop.want_type != SCREEN_TTF) {
-		std::string message = "This scaler may not work properly or have undesired effect:\n\n"+scaler+"\n\nDo you want to force load the scaler?";
+		std::string message = formatString(MSG_Get("SCALER_LOAD_WARN"), scaler.c_str());
 		render.scale.forced = systemmessagebox("Loading scaler", message.c_str(), "yesno","question", 1);
 		render.scale.prompt = false;
 	}
@@ -1006,6 +1006,9 @@ void RENDER_SetSize(Bitu width,Bitu height,Bitu bpp,float fps,double scrn_ratio)
 		width += 8*32;
 		width += 4;
 	}
+	else if (machine == MCH_TANDY || machine == MCH_PCJR) {
+		height += 8*3;
+	}
 	else {
 		height += 8*2;
 	}
@@ -1319,9 +1322,9 @@ std::string LoadGLShader(Section_prop * section) {
             path = "";
         }
         if (path.size() && !RENDER_GetShader(path,(char *)shader_src.c_str())) {
-            Cross::GetPlatformConfigDir(path);
+            path = Cross::GetPlatformConfigDir();
             pathcfg = path + "glshaders" + CROSS_FILESPLIT + f;
-            Cross::GetPlatformResDir(path);
+            path = Cross::GetPlatformResDir();
             pathres = path + "glshaders" + CROSS_FILESPLIT + f;
             if (!RENDER_GetShader(pathcfg,(char *)shader_src.c_str()) && !RENDER_GetShader(pathres,(char *)shader_src.c_str()) && (sh->realpath==f || !RENDER_GetShader(f,(char *)shader_src.c_str()))) {
                 sh->SetValue("none");

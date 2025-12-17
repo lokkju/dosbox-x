@@ -35,6 +35,9 @@
 #ifdef OS2
 # define INCL_DOS
 # define INCL_WIN
+# define INCL_DOSERRORS
+# define INCL_WINDIALOGS
+# include <os2.h>
 #endif
 
 #if defined(WIN32)
@@ -80,6 +83,15 @@ void DOSBox_SetSysMenu(void), GFX_OpenGLRedrawScreen(void), InitFontHandle(void)
 void MenuBrowseProgramFile(void), OutputSettingMenuUpdate(void), aspect_ratio_menu(void), update_pc98_clock_pit_menu(void), AllocCallback1(void), AllocCallback2(void), ToggleMenu(bool pressed);
 extern int tryconvertcp, Reflect_Menu(void);
 bool kana_input = false; // true if a half-width kana was typed
+
+#if __APPLE__ && __MAC_OS_X_VERSION_MIN_REQUIRED < 101200
+#define IS_OLDMACOS 1 /* FIX_ME: Tested on El Capitan (10.11). If this macro is required for Sierra (10.12), change to 101300 */
+#endif
+
+#ifndef LINUX
+char* convert_escape_newlines(const char* aMessage);
+char* revert_escape_newlines(const char* aMessage);
+#endif
 
 #ifndef _GNU_SOURCE
 # define _GNU_SOURCE
@@ -135,7 +147,7 @@ bool kana_input = false; // true if a half-width kana was typed
 #include "../dos/drives.h"
 #include "../ints/int10.h"
 #if !defined(HX_DOS)
-#if !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
+#if !defined(OS2) && !defined(__MINGW32__) || defined(__MINGW64_VERSION_MAJOR)
 #include "whereami.c"
 #endif
 #include "../libs/tinyfiledialogs/tinyfiledialogs.h"
@@ -144,7 +156,7 @@ bool kana_input = false; // true if a half-width kana was typed
 #include "display2.cpp"
 #endif
 
-#if (defined __i386__ || defined __x86_64__) && (defined BSD || defined LINUX)
+#if (defined __i386__ || defined __x86_64__) && (!defined IS_OLDMACOS && (defined BSD || defined LINUX))
 #include "libs/passthroughio/passthroughio.h" // for dropPrivileges()
 #endif
 
@@ -155,6 +167,15 @@ bool kana_input = false; // true if a half-width kana was typed
 #if defined(WIN32) && !defined(HX_DOS)
 # include <shobjidl.h>
 #endif
+
+#include <string>
+#if defined(_WIN32)
+#include <direct.h>
+#define getcwd _getcwd
+#else
+#include <unistd.h>
+#endif
+#include <limits.h>
 
 #include <output/output_direct3d.h>
 #include <output/output_opengl.h>
@@ -167,6 +188,14 @@ static bool init_output = false;
 #if defined(WIN32)
 #include "resource.h"
 #if !defined(HX_DOS)
+
+#ifndef PATH_MAX
+    #if defined(WIN32)
+        #define PATH_MAX MAX_PATH
+    #else
+        #define PATH_MAX 4096 /* LINUX sets to 4096, while this varies from 260 to 4096 depending on platforms */
+    #endif
+#endif
 
 BOOL CALLBACK EnumDispProc(HMONITOR hMon, HDC dcMon, RECT* pRcMon, LPARAM lParam) {
     (void)hMon;
@@ -239,7 +268,7 @@ extern "C" void sdl1_hax_macosx_highdpi_set_enable(const bool enable);
 #endif
 
 # include "SDL_version.h"
-#if !defined(C_SDL2) && !defined(RISCOS)
+#if !defined(C_SDL2) && !defined(RISCOS) && !defined(OS2)
 # ifndef SDL_DOSBOX_X_SPECIAL
 #  warning It is STRONGLY RECOMMENDED to compile the DOSBox-X code using the SDL 1.x library provided in this source repository.
 #  error You can ignore this by commenting out this error, but you will encounter problems if you use the unmodified SDL 1.x library.
@@ -442,6 +471,19 @@ std::string GetDOSBoxXPath(bool withexe=false) {
     char exepath[MAX_PATH];
     GetModuleFileName(NULL, exepath, sizeof(exepath));
     full=std::string(exepath);
+#elif defined(OS2) /* No WAI */
+    char exepath[CCHMAXPATH];
+    PPIB pib;
+    APIRET rc;
+
+    full = std::string("");
+    rc = DosGetInfoBlocks(NULL, &pib);
+    if (rc == NO_ERROR) {
+        rc = DosQueryModuleName(pib->pib_hmte, CCHMAXPATH, (PCHAR)&exepath);
+        if (rc == NO_ERROR) {
+            full = std::string(exepath);
+        }
+    }
 #else
     int length = wai_getExecutablePath(NULL, 0, NULL);
     char *exepath = (char*)malloc(length + 1);
@@ -897,10 +939,6 @@ const char *modifier;
 # define PRIO_TOTAL             (PRIO_MAX-PRIO_MIN)
 #endif
 
-#ifdef OS2
-# include <os2.h>
-#endif
-
 #if defined(WIN32)
 HWND GetHWND(void) {
     SDL_SysWMinfo wmi;
@@ -1073,6 +1111,7 @@ void GFX_SetTitle(int32_t cycles, int frameskip, Bits timing, bool paused) {
     }
 
     if (paused) strcat(title," PAUSED");
+    if (ticksLocked) strcat(title, " TURBO");
 #if C_DEBUG
     if (IsDebuggerActive()) strcat(title," DEBUGGER");
 #endif
@@ -1084,23 +1123,150 @@ void GFX_SetTitle(int32_t cycles, int frameskip, Bits timing, bool paused) {
 }
 
 bool warn_on_mem_write = false;
+bool CodePageGuestToHostUTF8(char *d/*CROSS_LEN*/,const char *s/*CROSS_LEN*/) ;
+
+#ifdef WIN32
+#ifdef __cplusplus
+extern "C" {
+#endif
+    int tinyfd_messageBoxW(
+        wchar_t const* aTitle, /* NULL or "" */
+        wchar_t const* aMessage, /* NULL or ""  may contain \n and \t */
+        wchar_t const* aDialogType, /* "ok" "okcancel" "yesno" "yesnocancel" */
+        wchar_t const* aIconType, /* "info" "warning" "error" "question" */
+        int aDefaultButton);
+#ifdef __cplusplus
+}
+#endif
+bool CodePageGuestToHostUTF16(uint16_t* d/*CROSS_LEN*/, const char* s/*CROSS_LEN*/);
+void SanitizeUTF16Newlines(uint16_t* utf16Message, size_t maxLen) {
+    for(size_t i = 0; i < maxLen && utf16Message[i] != 0; ++i) {
+        if(utf16Message[i] == 0x25D9) {
+            utf16Message[i] = 0x000A;
+        }
+    }
+}
+#elif defined(MACOSX)
+std::string replaceNewlineWithEscaped(const std::string& input) {
+    std::string output;
+    for (size_t i = 0; i < input.length(); ++i) {
+        if (input[i] == '\'') {  // Close, escape and open
+            output += "'\\''";
+        }
+        else if (input[i] == '\n'){
+            output += "\\n";   // '\n' needs to be replaced to "\\n" 
+            i++;
+        }
+        //else if (input[i] == '\"'){
+        //    output += "\\\"";   // '"' needs to be replaced to "\\\"" 
+        //    i++;
+        //}
+        else {
+            output += input[i];
+        }
+    }
+    return output;
+}
+#else
+std::string replaceNewlineWithEscaped(const std::string& input) {
+    std::string output;
+    size_t i = 0;
+
+    while(i < input.length()) {
+        if(input[i] == '\\') {
+            if(input[i + 1] != 'n') output += '\\'; // "\n" needs to be escaped to "\\n" 
+        }
+        else if(input[i] == '\n') {
+            output += "\\\\n";   // '\n' needs to be replaced to "\\n" 
+            i++;
+        }
+        else if(input[i] == '`') {
+            output += "\\`";  // '`' needs to be replaced to "\\`" 
+            i++;
+        }
+        else if(input[i] == '"') {
+            output += "\\\"";  // '"' needs to be replaced to "\\\"" 
+            i++;
+        }
+        else {
+            output += input[i];
+            i++;
+        }
+    }
+
+    return output;
+}
+#endif
 
 bool systemmessagebox(char const * aTitle, char const * aMessage, char const * aDialogType, char const * aIconType, int aDefaultButton) {
 #if !defined(HX_DOS)
-    if(!aMessage) aMessage = "";
-    std::string lDialogString(aMessage);
+    std::string lTitleString = aTitle ? aTitle : "";
+    std::string lDialogString = aMessage ? aMessage : "";
+    std::string lDialogTypeStr = aDialogType ? aDialogType : "ok";
+    std::string lIconTypeStr = aIconType ? aIconType : "info";
+
+    std::replace(lTitleString.begin(), lTitleString.end(), '\"', ' ');
     std::replace(lDialogString.begin(), lDialogString.end(), '\"', ' ');
+    std::replace(lDialogTypeStr.begin(), lDialogTypeStr.end(), '\"', ' ');
+    std::replace(lIconTypeStr.begin(), lIconTypeStr.end(), '\"', ' ');
 
     bool fs=sdl.desktop.fullscreen;
     if (fs) GFX_SwitchFullScreen();
     MAPPER_ReleaseAllKeys();
     GFX_LosingFocus();
     GFX_ReleaseMouse();
-    bool ret=tinyfd_messageBox(aTitle, lDialogString.c_str(), aDialogType, aIconType, aDefaultButton);
+
+#ifndef WIN32
+    size_t aMessageLength = strlen(aMessage);
+    size_t aTitleLength = strlen(aTitle);
+    char* lMessage = (char*)malloc((aMessageLength * 2 + 1) * sizeof(char));  // DBCS may expand to 3 to 4 bytes when converted to UTF-8
+    char* lTitle = (char*)malloc((aTitleLength * 2 + 1) * sizeof(char));  // DBCS may expand to 3 to 4 bytes when converted to UTF-8
+    lDialogString = replaceNewlineWithEscaped(lDialogString); // String may include "\n" which needs to be escaped to "\\n" 
+    CodePageGuestToHostUTF8(lMessage, lDialogString.c_str());
+    lTitleString = replaceNewlineWithEscaped(lTitleString); // String may include "\n" which needs to be escaped to "\\n" 
+    CodePageGuestToHostUTF8(lTitle, lTitleString.c_str());
+    bool result=tinyfd_messageBox(lTitle, lMessage, aDialogType, aIconType, aDefaultButton);
+    free(lMessage);
+    free(lTitle);
+#else
+    size_t msgLen = lDialogString.length() + 1;
+    size_t titleLen = lTitleString.length() + 1;
+    size_t typeLen = lDialogTypeStr.length() + 1;
+    size_t iconLen = lIconTypeStr.length() + 1;
+
+    uint16_t* utf16Message = (uint16_t*)malloc(msgLen * 2);
+    uint16_t* utf16Title = (uint16_t*)malloc(titleLen * 2);
+    uint16_t* utf16Type = (uint16_t*)malloc(typeLen * 2);
+    uint16_t* utf16Icon = (uint16_t*)malloc(iconLen * 2);
+
+    if(!utf16Message || !utf16Title || !utf16Type || !utf16Icon) {
+        free(utf16Message); free(utf16Title); free(utf16Type); free(utf16Icon);
+        return false;
+    }
+
+    CodePageGuestToHostUTF16(utf16Message, lDialogString.c_str());
+    CodePageGuestToHostUTF16(utf16Title, lTitleString.c_str());
+    CodePageGuestToHostUTF16(utf16Type, lDialogTypeStr.c_str());
+    CodePageGuestToHostUTF16(utf16Icon, lIconTypeStr.c_str());
+
+    SanitizeUTF16Newlines(utf16Message, msgLen);
+    int result = tinyfd_messageBoxW(
+        (wchar_t const*)utf16Title,
+        (wchar_t const*)utf16Message,
+        (wchar_t const*)utf16Type,
+        (wchar_t const*)utf16Icon,
+        aDefaultButton
+    );
+
+    free(utf16Message);
+    free(utf16Title);
+    free(utf16Type);
+    free(utf16Icon);
+#endif
     MAPPER_ReleaseAllKeys();
     GFX_LosingFocus();
     if (fs&&!sdl.desktop.fullscreen) GFX_SwitchFullScreen();
-    return ret;
+    return result;
 #else
     return true;
 #endif
@@ -1114,35 +1280,35 @@ bool CheckQuit(void) {
     if (sdl.desktop.fullscreen) GFX_SwitchFullScreen();
     if (warn == "true") {
         if (!quit) {
-            systemmessagebox("Quit DOSBox-X warning","Quitting from DOSBox-X with this is currently disabled.","ok", "warning", 1);
+            systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_DISABLED"),"ok", "warning", 1);
             return false;
         } else
-            return systemmessagebox("Quit DOSBox-X warning","This will quit from DOSBox-X.\nAre you sure?","yesno", "question", 1);
+            return systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_CONFIRM"),"yesno", "question", 1);
     } else if (warn == "false")
         return true;
     if (dos_kernel_disabled&&strcmp(RunningProgram, "DOSBOX-X")) {
         if (!quit) {
-            systemmessagebox("Quit DOSBox-X warning","You cannot quit DOSBox-X while running a guest system.","ok", "warning", 1);
+            systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_GUEST_DISABLED"),"ok", "warning", 1);
             return false;
         } else
-            return systemmessagebox("Quit DOSBox-X warning","You are currently running a guest system.\nAre you sure to quit anyway now?","yesno", "question", 1);
+            return systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_GUEST_CONFIRM"),"yesno", "question", 1);
     }
     if (warn == "autofile")
         for (uint8_t handle = 0; handle < DOS_FILES; handle++) {
             if (Files[handle] && (Files[handle]->GetName() == NULL || strcmp(Files[handle]->GetName(), "CON")) && (Files[handle]->GetInformation()&DeviceInfoFlags::Device) == 0) {
                 if (!quit) {
-                    systemmessagebox("Quit DOSBox-X warning","You cannot quit DOSBox-X while one or more files are open.","ok", "warning", 1);
+                    systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_FILE_OPEN_DISABLED"),"ok", "warning", 1);
                     return false;
                 } else
-                    return systemmessagebox("Quit DOSBox-X warning","It may be unsafe to quit from DOSBox-X right now\nbecause one or more files are currently open.\nAre you sure to quit anyway now?","yesno", "question", 1);
+                    return systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_FILE_OPEN_CONFIRM"),"yesno", "question", 1);
             }
         }
     else if (RunningProgram&&strcmp(RunningProgram, "DOSBOX-X")&&strcmp(RunningProgram, "COMMAND")&&strcmp(RunningProgram, "4DOS")) {
         if (!quit) {
-            systemmessagebox("Quit DOSBox-X warning","You cannot quit DOSBox-X while running a program or game.","ok", "warning", 1);
+            systemmessagebox("Quit DOSBox-X warning",MSG_Get("QUIT_PROGRAM_DISABLED"),"ok", "warning", 1);
             return false;
         } else
-            return systemmessagebox("Quit DOSBox-X warning","You are currently running a program or game.\nAre you sure to quit anyway now?","yesno", "question", 1);
+            return systemmessagebox("Quit DOSBox-X warning", MSG_Get("QUIT_PROGRAM_CONFIRM"),"yesno", "question", 1);
     }
 #endif
     return true;
@@ -1594,6 +1760,7 @@ SDL_Window* GFX_SetSDLWindowMode(uint16_t width, uint16_t height, SCREEN_TYPES s
      */
     if (!sdl.window
             || (lastType != screenType)
+            || ( !GFX_IsFullscreen() && ( SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_FULLSCREEN ))
 //          || (currWidth != width) || (currHeight != height)
 //          || (glwindow != (0 != (SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_OPENGL)))
 //          || (fullscreen && (0 == (SDL_GetWindowFlags(sdl.window) & SDL_WINDOW_FULLSCREEN)))
@@ -1947,6 +2114,7 @@ void drawmenu(Bitu) {
 #endif
 
 void RENDER_Reset(void);
+void UpdateUserCursorScreenDimensions(void);
 
 Bitu GFX_SetSize(Bitu width, Bitu height, Bitu flags, double scalex, double scaley, GFX_CallBack_t callback)
 {
@@ -2099,7 +2267,7 @@ Bitu GFX_SetSize(Bitu width, Bitu height, Bitu flags, double scalex, double scal
     }
 #endif
     UpdateWindowDimensions();
-
+    UpdateUserCursorScreenDimensions();
 #if defined(WIN32) && !defined(HX_DOS) && !defined(_WIN32_WINDOWS)
     WindowsTaskbarUpdatePreviewRegion();
 #endif
@@ -2518,6 +2686,14 @@ static void CaptureMouse(bool pressed) {
     CaptureMouseNotify();
     GFX_CaptureMouse();
 }
+
+#if defined(C_SDL2)
+static void CaptureKeyboard(bool pressed) {
+    if (pressed) {
+        GFX_KeyboardCapture(!sdl.capture_keyboard);
+    }
+}
+#endif
 
 #if defined (WIN32)
 STICKYKEYS stick_keys = {sizeof(STICKYKEYS), 0};
@@ -3603,6 +3779,11 @@ static void GUI_StartUp() {
     sdl.mouse.ysensitivity = p3->GetSection()->Get_int("ysens");
 
 #if defined(C_SDL2)
+    // Because we have the option of a dedicated keyboard shortcut to exit
+    // fullscreen, we don't need an Alt+Tab escape hatch. This lets us
+    // block it along with everything else, so you can use it in Windows etc.
+    SDL_SetHint(SDL_HINT_ALLOW_ALT_TAB_WHILE_GRABBED, "0");
+
     // Apply raw mouse input setting
     SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_MODE_WARP, section->Get_bool("raw_mouse_input") ? "0" : "1", SDL_HINT_OVERRIDE);
 #endif
@@ -3647,6 +3828,11 @@ static void GUI_StartUp() {
         MAPPER_AddHandler(CaptureMouse,MK_f10,MMOD1,"capmouse","Capture mouse", &item); /* KEEP: Most DOSBox-X users may have muscle memory for this */
         item->set_text("Capture mouse");
     }
+
+#if defined(C_SDL2)
+    MAPPER_AddHandler(CaptureKeyboard,MK_f11,MMOD1,"capkeyboard","Capture keyboard", &item);
+    item->set_text("Capture keyboard");
+#endif
 
 #if defined(C_SDL2) || defined(WIN32) || defined(MACOSX)
     MAPPER_AddHandler(QuickEdit,MK_nothing, 0,"fastedit", "Quick edit mode", &item);
@@ -3977,6 +4163,10 @@ static void GUI_StartUp() {
     SDL_WM_SetCaption("DOSBox-X",VERSION);
 #endif
 
+#if defined(C_SDL2)
+    GFX_KeyboardCapture(section->Get_bool("keyboard_capture"));
+#endif
+
     /* Please leave the Splash screen stuff in working order in DOSBox-X. We spend a lot of time making DOSBox-X. */
     //ShowSplashScreen();   /* I will keep the splash screen alive. But now, the BIOS will do it --J.C. */
 
@@ -4012,6 +4202,28 @@ bool Mouse_IsLocked()
 {
     return sdl.mouse.locked;
 }
+
+#if defined(C_SDL2)
+void GFX_KeyboardCapture(bool enable) {
+    if (sdl.window) {
+        SDL_SetWindowKeyboardGrab(sdl.window, enable ? SDL_TRUE : SDL_FALSE);
+
+        // Make sure we're using the true value of the current grabbed state.
+        bool grabbed = SDL_GetWindowKeyboardGrab(sdl.window) == SDL_TRUE;
+        sdl.capture_keyboard = grabbed;
+
+        if (grabbed)
+            LOG_MSG("Capturing keyboard");
+        else
+            LOG_MSG("Releasing keyboard");
+    }
+
+    // Make sure our menu item is refreshed, to ensure the checkmark value next
+    // to the item is up-to-date.
+    if (mainMenu.item_exists("mapper_capkeyboard"))
+            mainMenu.get_item("mapper_capkeyboard").check(sdl.capture_keyboard).refresh_item(mainMenu);
+}
+#endif
 
 static void RedrawScreen(uint32_t nWidth, uint32_t nHeight) {
     (void)nWidth;//UNUSED
@@ -4322,6 +4534,16 @@ bool GFX_CursorInOrNearScreen(int wx,int wy) {
     return  (wx >= minx && wx < maxx) && (wy >= miny && wy < maxy);
 }
 
+void UpdateUserCursorScreenDimensions(void) {
+	user_cursor_sw     = sdl.clip.w;
+	user_cursor_sh     = sdl.clip.h;
+
+	if (video_debug_overlay && vga.draw.width < render.src.width) {
+		user_cursor_sw     = (vga.draw.width*user_cursor_sw)/render.src.width;
+		user_cursor_sh     = (vga.draw.height*user_cursor_sh)/render.src.height;
+	}
+}
+
 static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
     bool inputToScreen = false;
 
@@ -4404,13 +4626,8 @@ static void HandleMouseMotion(SDL_MouseMotionEvent * motion) {
     user_cursor_y      = motion->y - sdl.clip.y;
     user_cursor_locked = sdl.mouse.locked;
     user_cursor_emulation = sdl.mouse.emulation;
-    user_cursor_sw     = sdl.clip.w;
-    user_cursor_sh     = sdl.clip.h;
 
-    if (video_debug_overlay && vga.draw.width < render.src.width) {
-        user_cursor_sw     = (vga.draw.width*user_cursor_sw)/render.src.width;
-        user_cursor_sh     = (vga.draw.height*user_cursor_sh)/render.src.height;
-    }
+    UpdateUserCursorScreenDimensions();
 
     auto xrel = static_cast<float>(motion->xrel) * sdl.mouse.xsensitivity / 100.0f;
     auto yrel = static_cast<float>(motion->yrel) * sdl.mouse.ysensitivity / 100.0f;
@@ -6415,7 +6632,7 @@ void SDL_SetupConfigSection() {
     Pint->SetBasic(true);
 
     Pstring = sdl_sec->Add_string("output", Property::Changeable::Always, "default");
-    Pstring->Set_help("What video system to use for output (openglnb = OpenGL nearest; openglpp = OpenGL perfect; ttf = TrueType font output).");
+    Pstring->Set_help("What video system to use for output (surface = software (SDL_Surface); openglnb = OpenGL nearest; openglpp = OpenGL perfect; ttf = TrueType font output).");
     Pstring->Set_values(outputs);
     Pstring->SetBasic(true);
 
@@ -6520,6 +6737,18 @@ void SDL_SetupConfigSection() {
         "7: Ctrl+W/Z, as supported by text editors like WordStar and MS-DOS EDIT.\n"
         "Putting a minus sign in front will disable the conversion for guest systems.");
     Pint->SetBasic(true);
+
+#if defined(C_SDL2)
+    Pbool = sdl_sec->Add_bool("keyboard_capture", Property::Changeable::Always, false);
+    Pbool->Set_help("Capture the keyboard, inhibiting window manager shortcuts.\n"
+        "Be warned, enabling this runs the risk of getting trapped inside "
+        "DOSBox-X, however it can be useful for passing combinations like Alt+F4 "
+        "through to DOS applications that use them, like WordPerfect.\n"
+        "Note that if another application attempts to grab the keyboard, DOSBox-X "
+        "will lose its grab over the keyboard. Additionally, not all shortcuts "
+        "can be inhibited on all platforms, for example Ctrl+Alt+Del on Windows.");
+    Pbool->SetBasic(true);
+#endif
 
     Pbool = sdl_sec->Add_bool("waitonerror",Property::Changeable::Always, true);
     Pbool->Set_help("Wait before closing the console if DOSBox-X has an error.");
@@ -6668,8 +6897,8 @@ static void launcheditor(std::string edit) {
     if (control->configfiles.size() && control->configfiles.front().size())
         execlp(edit.c_str(),edit.c_str(),control->configfiles.front().c_str(),(char*) 0);
     std::string path,file;
-    Cross::CreatePlatformConfigDir(path);
-    Cross::GetPlatformConfigName(file);
+    path = Cross::CreatePlatformConfigDir();
+    file = Cross::GetPlatformConfigName();
     path += file;
     FILE* f = fopen(path.c_str(),"r");
     if(!f && !control->PrintConfig(path.c_str())) {
@@ -6709,7 +6938,7 @@ static void launchcaptures(std::string const& edit) {
         exit(1);
     } else {
         path = "";
-        Cross::CreatePlatformConfigDir(path);
+        path = Cross::CreatePlatformConfigDir();
         path += file;
         Cross::CreateDir(path);
         stat(path.c_str(),&cstat);
@@ -6739,7 +6968,7 @@ static void launchsaves(std::string const& edit) {
         exit(1);
     } else {
         path = "";
-        Cross::CreatePlatformConfigDir(path);
+        path = Cross::CreatePlatformConfigDir();
         path += file;
         Cross::CreateDir(path);
         stat(path.c_str(),&cstat);
@@ -6756,8 +6985,8 @@ static void launchsaves(std::string const& edit) {
 
 static void printconfiglocation() {
     std::string path,file;
-    Cross::CreatePlatformConfigDir(path);
-    Cross::GetPlatformConfigName(file);
+    path =Cross::CreatePlatformConfigDir();
+    file = Cross::GetPlatformConfigName();
     path += file;
 
     FILE* f = fopen(path.c_str(),"r");
@@ -6778,8 +7007,8 @@ static void eraseconfigfile() {
         show_warning("Warning: dosbox-x.conf (or dosbox.conf) exists in current working directory.\nThis will override the configuration file at runtime.\n");
     }
     std::string path,file;
-    Cross::GetPlatformConfigDir(path);
-    Cross::GetPlatformConfigName(file);
+    path = Cross::GetPlatformConfigDir();
+    file = Cross::GetPlatformConfigName();
     path += file;
     f = fopen(path.c_str(),"r");
     if (!f) exit(0);
@@ -6798,7 +7027,7 @@ static void erasemapperfile() {
     }
 
     std::string path,file=MAPPERFILE;
-    Cross::GetPlatformConfigDir(path);
+    path = Cross::GetPlatformConfigDir();
     path += file;
     FILE* f = fopen(path.c_str(),"r");
     if (!f) exit(0);
@@ -7751,7 +7980,7 @@ void DISP2_Init(uint8_t color), DISP2_Shut();
 //extern void UI_Init(void);
 void grGlideShutdown(void);
 int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
-#if (defined __i386__ || defined __x86_64__) && (defined BSD || defined LINUX)
+#if (defined __i386__ || defined __x86_64__) && (!defined IS_OLDMACOS && (defined BSD || defined LINUX))
     dropPrivilegesTemp();
 #endif
     CommandLine com_line(argc,argv);
@@ -7763,6 +7992,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
 #if defined(WIN32) && !defined(HX_DOS)
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 #endif
+
 
     /* -- parse command line arguments */
     if (!DOSBOX_parse_argv()) return 1;
@@ -7947,8 +8177,8 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         std::string tmp,config_path,config_combined;
 
         /* -- Parse configuration files */
-        Cross::GetPlatformConfigDir(config_path);
-        Cross::GetPlatformConfigName(tmp);
+        config_path = Cross::GetPlatformConfigDir();
+        tmp = Cross::GetPlatformConfigName();
 
         if (exepath.size()) {
             control->ParseConfigFile((exepath + "dosbox-x.conf").c_str());
@@ -7986,7 +8216,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         usecfgdir = false;
     } else if (workdiropt == "userconfig") {
         std::string config_path;
-        Cross::GetPlatformConfigDir(config_path);
+        config_path = Cross::GetPlatformConfigDir();
         if (config_path.size()) {
             if (chdir(config_path.c_str()) == -1) {
                 LOG(LOG_GUI, LOG_ERROR)("sdlmain.cpp main() failed to change directories for workdiropt 'userconfig'.");
@@ -8015,13 +8245,9 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
 
     int workdirsave = 0;
     std::string workdirsaveas = "";
+
 #if defined(MACOSX) || defined(LINUX) || (defined(WIN32) && !defined(HX_DOS))
     {
-        char cwd[512] = {0};
-        if(getcwd(cwd, sizeof(cwd) - 1) == NULL) {
-            LOG(LOG_GUI, LOG_ERROR)("sdlmain.cpp main() failed to get the current working directory.");
-        }
-
         if(control->opt_promptfolder < 0) {
 #if !defined(MACOSX)
             struct stat st;
@@ -8034,7 +8260,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             }
 #endif
             std::string res_path;
-            Cross::GetPlatformResDir(res_path);
+            res_path = Cross::GetPlatformResDir();
             if(stat((res_path + "dosbox-x.conf").c_str(), &st) == 0) {
                 if(S_ISREG(st.st_mode)) {
                     control->opt_promptfolder = 0;
@@ -8048,8 +8274,9 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         if (control->opt_promptfolder < 0)
             control->opt_promptfolder = 1;
 #else
-        if (control->opt_promptfolder < 0)
-            control->opt_promptfolder = (!isatty(0) || !strcmp(cwd,"/")) ? 1 : 0;
+        std::unique_ptr<char[]> cwd(new char[PATH_MAX]);
+        if (control->opt_promptfolder < 0 && getcwd(cwd.get(), PATH_MAX) != nullptr)
+            control->opt_promptfolder = (!isatty(0) || !strcmp(cwd.get(), "/")) ? 1 : 0;
 #endif
         if (control->opt_promptfolder == 1 && workdiropt == "default" && workdirdef.size()) {
             control->opt_promptfolder = 0;
@@ -8080,12 +8307,15 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
                 E_Exit("Can't init SDL %s",SDL_GetError());
 #endif
 
-            char folder[512], *default_folder=folder;
-            std::string dir = workdirdef.empty()?(exepath.size()?exepath:""):workdirdef;
-            if (dir.size()&&dir.size()<512)
-                strcpy(default_folder, dir.c_str());
-            else
-                default_folder = NULL;
+            std::unique_ptr<char[]> folder(new char[PATH_MAX]);
+            char* default_folder = nullptr;
+
+            std::string dir = workdirdef.empty() ? (!exepath.empty() ? exepath : "") : workdirdef;
+            if (!dir.empty() && dir.size() < PATH_MAX) {
+                std::strncpy(folder.get(), dir.c_str(), PATH_MAX);
+                folder[PATH_MAX-1] = '\0'; // Null terminate just in case
+                default_folder = folder.get();
+            }
             const char *confirmstr = "Do you want to use the selected folder as the DOSBox-X working directory in future sessions?\n\nIf you select Yes, DOSBox-X will not prompt for a folder again.\nIf you select No, DOSBox-X will always prompt for a folder when it runs.\nIf you select Cancel, DOSBox-X will ask this question again next time.";
             const char *quitstr = "You have not selected a valid path. Do you want to run DOSBox-X with the current path as the DOSBox-X working directory?\n\nDOSBox-X will exit if you select No.";
 #if defined(MACOSX)
@@ -8167,9 +8397,9 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
 #endif
     std::string tmp, config_path, res_path, config_combined;
     /* -- Parse configuration files */
-    Cross::GetPlatformConfigDir(config_path);
-    Cross::GetPlatformResDir(res_path);
-    Cross::GetPlatformConfigName(tmp);
+    config_path = Cross::GetPlatformConfigDir();
+    res_path = Cross::GetPlatformResDir();
+    tmp = Cross::GetPlatformConfigName();
     config_combined = config_path + tmp;
     {
 
@@ -8223,7 +8453,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
                         tsec->HandleInputline("working directory option=autoprompt");
                 }
                 //Try to create the userlevel configfile.
-                Cross::CreatePlatformConfigDir(config_path);
+                config_path = Cross::CreatePlatformConfigDir();
 
                 LOG(LOG_MISC,LOG_DEBUG)("Attempting to write config file according to -userconf, to %s",config_combined.c_str());
                 if (control->PrintConfig(config_combined.c_str())) {
@@ -8261,31 +8491,37 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
 
     if (!control->opt_defaultconf) {
         /* -- -- if none found, use dosbox-x.conf or dosbox.conf */
-        if (!control->configfiles.size()) control->ParseConfigFile("dosbox-x.conf");
-        if (!control->configfiles.size()) control->ParseConfigFile("dosbox.conf");
-        if (!control->configfiles.size()) {
-            std::string exepath=GetDOSBoxXPath();
-            if (exepath.size()) {
-                control->ParseConfigFile((exepath + "dosbox-x.conf").c_str());
-                if (!control->configfiles.size()) control->ParseConfigFile((exepath + "dosbox.conf").c_str());
+        std::string cur_dir;
+        std::unique_ptr<char[]> cwd(new char[PATH_MAX]);
+        if(getcwd(cwd.get(), PATH_MAX) != nullptr) {
+            cur_dir = std::string(cwd.get()) + CROSS_FILESPLIT;
+        }
+        else {
+            cur_dir.clear();
+        }
+        const std::string config_paths[] = {
+            cur_dir + "dosbox-x.conf",
+            cur_dir + "dosbox.conf",
+            exepath.empty() ? "" : exepath + "dosbox-x.conf",
+            exepath.empty() ? "" : exepath + "dosbox.conf",
+            res_path.empty() ? "": res_path + "dosbox-x.conf", /* resource level conf */
+            config_path.empty() ? "" : config_path + "dosbox-x.conf", /* user level conf */
+            config_combined /* user level conf (default name)*/
+        };
+
+        for (const auto& path : config_paths) {
+            if (!control->configfiles.size() && !path.empty()) {
+                LOG(LOG_MISC, LOG_NORMAL)("Trying config: %s\n", path.c_str());
+                control->ParseConfigFile(path.c_str());
             }
         }
-
-        /* -- -- if none found, use resource level conf */
-        if (!control->configfiles.size()) control->ParseConfigFile((res_path + "dosbox-x.conf").c_str());
-
-        /* -- -- if none found, use userlevel conf */
-        if (!control->configfiles.size()) control->ParseConfigFile((config_path + "dosbox-x.conf").c_str());
-        if (!control->configfiles.size()) {
-            control->ParseConfigFile(config_combined.c_str());
-        }
-
         /* -- -- if none found, create userlevel conf */
         if(!control->configfiles.size()) {
-            Cross::CreatePlatformConfigDir(config_path);
-            control->PrintConfig(config_combined.c_str());
-            control->ParseConfigFile(config_combined.c_str()); // Load the conf file created above 
-            if(control->configfiles.size()) LOG_MSG("CONFIG: Created and loaded user config file %s", config_combined.c_str());
+            if(!config_combined.empty()){
+                control->PrintConfig(config_combined.c_str());
+                control->ParseConfigFile(config_combined.c_str()); // Load the conf file created above
+                if(control->configfiles.size()) LOG_MSG("CONFIG: Created and loaded user config file %s", config_combined.c_str());
+            } else LOG_MSG("CONFIG: Warning: User config file not found. Try specifying it with -conf option or put it in the current directory.");
         }
 
         if (control->configfiles.size()) {
@@ -8585,7 +8821,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             }
         } else if (workdiropt == "userconfig") {
             std::string config_path;
-            Cross::GetPlatformConfigDir(config_path);
+            config_path = Cross::GetPlatformConfigDir();
             if(config_path.size()) {
                 if(chdir(config_path.c_str()) == -1) {
                     LOG(LOG_GUI, LOG_ERROR)("sdlmain.cpp main() failed to change directories for workdiropt 'userconfig'.");
@@ -8605,12 +8841,13 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             }
         }
 
-        char cwd[512] = {0};
-        if(getcwd(cwd, sizeof(cwd) - 1))
-            LOG_MSG("DOSBox-X's working directory: %s\n", cwd);
-        else
-            LOG(LOG_GUI, LOG_ERROR)("sdlmain.cpp main() failed to get the current working directory.");
-
+        {
+            std::unique_ptr<char[]> cwd(new char[PATH_MAX]);
+            if(getcwd(cwd.get(), PATH_MAX))
+                LOG_MSG("DOSBox-X's working directory: %s\n", cwd.get());
+            else
+                LOG(LOG_GUI, LOG_ERROR)("sdlmain.cpp main() failed to get the current working directory.");
+        }
     const char *imestr = section->Get_string("ime");
     enableime = !strcasecmp(imestr, "true") || !strcasecmp(imestr, "1");
     if (!strcasecmp(imestr, "auto")) {
@@ -9288,7 +9525,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         /* The machine just "powered on", and then reset finished */
         if (!VM_PowerOn()) E_Exit("VM failed to power on");
 
-#if (defined __i386__ || defined __x86_64__) && (defined BSD || defined LINUX)
+#if (defined __i386__ || defined __x86_64__) && (!defined IS_OLDMACOS && (defined BSD || defined LINUX))
         /*
           Drop root privileges after they are no longer needed, which is a good
           practice if the executable is setuid root.

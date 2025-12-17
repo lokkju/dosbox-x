@@ -15,6 +15,7 @@ extern "C" {
 #include "dosbox.h"
 #include "logging.h"
 #include "menudef.h"
+#include "../ints/int10.h"
 #include <output/output_opengl.h>
 #include <output/output_tools.h>
 #include <output/output_tools_xbrz.h>
@@ -101,7 +102,6 @@ extern bool SDLDrawGenFontTextureInit;
 extern int aspect_ratio_x, aspect_ratio_y;
 extern int initgl, lastcp;
 extern bool font_16_init;
-extern uint8_t int10_font_16[256 * 16], int10_font_16_init[256 * 16];
 
 SDL_OpenGL sdl_opengl = {0};
 
@@ -342,7 +342,8 @@ void OUTPUT_OPENGL_Select( GLKind kind )
     sdl_opengl.use_shader = false;
     initgl=0;
 #if defined(C_SDL2)
-    SDL_SetHint(SDL_HINT_FRAMEBUFFER_ACCELERATION, "opengl");
+    SDL_SetHint( SDL_HINT_FRAMEBUFFER_ACCELERATION, "1" ); // setting this to "opengl" caused crashes in certain situations (#3661). can still be overridden via environment variable
+
     void GFX_SetResizeable(bool enable);
     GFX_SetResizeable(true);
     sdl.window = GFX_SetSDLWindowMode(640,400, SCREEN_OPENGL);
@@ -353,6 +354,8 @@ void OUTPUT_OPENGL_Select( GLKind kind )
         }
         sdl_opengl.context = SDL_GL_CreateContext(sdl.window);
         sdl.surface = SDL_GetWindowSurface(sdl.window);
+
+        LOG_MSG( "OpenGL Version : %s", glGetString( GL_VERSION ));
     }
     if (!sdl.window || !sdl_opengl.context || sdl.surface == NULL) {
 #else
@@ -779,7 +782,7 @@ Bitu OUTPUT_OPENGL_SetSize()
     }
 #endif
 
-    if (sdl.desktop.fullscreen&&sdl_opengl.use_shader)
+    if (sdl_opengl.use_shader)
         glViewport((sdl.surface->w-sdl.clip.w)/2,(sdl.surface->h-sdl.clip.h)/2,sdl.clip.w,sdl.clip.h);
     else
         glViewport(0, 0, sdl.surface->w, sdl.surface->h);

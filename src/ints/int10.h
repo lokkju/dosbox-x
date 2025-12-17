@@ -99,6 +99,7 @@ extern uint32_t S3_LFB_BASE;
 #define BIOS_CHEIGHT uint8_t cheight=IS_EGAVGA_ARCH?real_readb(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT):8;
 
 extern uint8_t int10_font_08[256 * 8];
+extern uint8_t int10_font_13[256 * 13];
 extern uint8_t int10_font_14[256 * 14];
 extern uint8_t int10_font_16[256 * 16];
 extern uint8_t int10_font_19[256 * 19];
@@ -107,6 +108,7 @@ extern uint8_t int10_font_14_alternate[20 * 15 + 1];
 extern uint8_t int10_font_16_alternate[19 * 17 + 1];
 extern uint8_t int10_font_14_init[256 * 14];
 extern uint8_t int10_font_16_init[256 * 16];
+extern uint8_t int10_font_16_mcga[256 * 16];
 
 struct VideoModeBlock {
 	uint16_t	mode;
@@ -129,6 +131,7 @@ typedef struct {
 	struct {
 		RealPt font_8_first;
 		RealPt font_8_second;
+		RealPt font_13;
 		RealPt font_14;
 		RealPt font_16;
 		RealPt font_14_alternate;
@@ -136,7 +139,7 @@ typedef struct {
 		RealPt font_19;
 		RealPt static_state;
 		RealPt video_save_pointers;
-        RealPt video_dynamic_save_area;
+		RealPt video_dynamic_save_area;
 		RealPt video_parameter_table;
 		RealPt video_save_pointer_table;
 		RealPt video_dcc_table;
@@ -149,7 +152,7 @@ typedef struct {
 		uint16_t pmode_interface_start;
 		uint16_t pmode_interface_window;
 		uint16_t pmode_interface_palette;
-        uint16_t vesa_alloc_modes;
+		uint16_t vesa_alloc_modes;
 		uint16_t used;
 	} rom;
 	uint16_t vesa_setmode;

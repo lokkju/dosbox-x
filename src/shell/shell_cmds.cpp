@@ -118,7 +118,7 @@ SHELL_Cmd cmd_list[]={
 #endif
 // Advanced commands specific to DOSBox-X
 //{	"ADDKEY",		1,		&DOS_Shell::CMD_ADDKEY,		"SHELL_CMD_ADDKEY_HELP"}, // ADDKEY as a program (Z:\BIN\ADDKEY.COM) instead of shell command
-{	"DX-CAPTURE",	1,		&DOS_Shell::CMD_DXCAPTURE,  "SHELL_CMD_DXCAPTURE_HELP"},
+{	"DX-CAPTURE",		1,		&DOS_Shell::CMD_DXCAPTURE,	"SHELL_CMD_DXCAPTURE_HELP"},
 { nullptr, 0, nullptr, nullptr }
 };
 
@@ -140,7 +140,6 @@ extern void MAPPER_AutoType(std::vector<std::string> &sequence, const uint32_t w
 extern void DOS_SetCountry(uint16_t countryNo), DOSV_FillScreen(void);
 void clearFontCache(void);
 std::string GetDOSBoxXPath(bool withexe=false);
-FILE *testLoadLangFile(const char *fname);
 Bitu DOS_ChangeCodepage(int32_t codepage, const char* codepagefile);
 bool CheckDBCSCP(int32_t codepage), SwitchLanguage(int oldcp, int newcp, bool confirm);
 void makestdcp950table(), makeseacp951table();

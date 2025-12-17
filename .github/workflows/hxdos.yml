@@ -21,7 +21,7 @@ jobs:
         uses: styfle/cancel-workflow-action@0.12.1
         with:
           access_token: ${{ github.token }}
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Prepare HX-DOS
         shell: bash
         run: |
@@ -104,7 +104,7 @@ jobs:
           cat $top/OUTPUT.TXT
           test -f $top/SUCCESS.TXT || (echo The HX-DOS build did not run successfully && exit 1)
       - name: Upload preview package
-        uses: actions/upload-artifact@v4.6.1
+        uses: actions/upload-artifact@v6.0.0
         with:
           name: dosbox-x-mingw-hx-dos-${{ env.timestamp }}
           path: ${{ github.workspace }}/package/

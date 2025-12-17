@@ -31,6 +31,13 @@
 #include "dos_inc.h"
 #include "bitop.h"
 
+#define DOSBOX_INCLUDE
+#include "iglib.h"
+
+void dosbox_integration_trigger_write_direct32(const uint32_t reg,const uint32_t val);
+bool dosbox_int_push_save_state(void);
+bool dosbox_int_pop_save_state(void);
+
 int hack_lfb_yadjust = 0;
 int hack_lfb_xadjust = 0;
 
@@ -60,6 +67,8 @@ extern bool allow_vesa_4bpp;
 extern bool allow_vesa_tty;
 extern bool vga_8bit_dac;
 
+void dosbox_integration_trigger_write_direct32(const uint32_t reg,const uint32_t val);
+
 #define VESA_SUCCESS          0x00
 #define VESA_FAIL             0x01
 #define VESA_HW_UNSUPPORTED   0x02
@@ -80,6 +89,11 @@ static char string_oem[]="S3 Incorporated. Trio64";
 static char string_vendorname[]="DOSBox Development Team";
 static char string_productname[]="DOSBox - The DOS Emulator";
 static char string_productrev[]="2";
+
+static char dosboxig_string_oem[]="DOSBox Integrated Video";
+static char dosboxig_string_vendorname[]="DOSBox Development Team";
+static char dosboxig_string_productname[]="DOSBox - The DOS Emulator";
+static char dosboxig_string_productrev[]="1";
 
 #ifdef _MSC_VER
 #pragma pack (1)
@@ -180,17 +194,17 @@ uint8_t VESA_GetSVGAInformation(uint16_t seg,uint16_t off) {
 	Bitu id=mem_readd(buffer);
 	if (((id==0x56424532)||(id==0x32454256)) && (!int10.vesa_oldvbe)) vbe2=true;
 
-    /* The reason this is an option is that there are some old DOS games that assume the BIOS
-     * fills in only the structure members. These games do not provide enough room for the
-     * full 256-byte block. If we zero the entire block, unrelated data next to the buffer
-     * gets wiped and the game crashes. */
-    if (vesa_zero_on_get_information) {
-        if (vbe2) {
-            for (i=0;i<0x200;i++) mem_writeb((PhysPt)(buffer+i),0);		
-        } else {
-            for (i=0;i<0x100;i++) mem_writeb((PhysPt)(buffer+i),0);
-        }
-    }
+	/* The reason this is an option is that there are some old DOS games that assume the BIOS
+	 * fills in only the structure members. These games do not provide enough room for the
+	 * full 256-byte block. If we zero the entire block, unrelated data next to the buffer
+	 * gets wiped and the game crashes. */
+	if (vesa_zero_on_get_information) {
+		if (vbe2) {
+			for (i=0;i<0x200;i++) mem_writeb((PhysPt)(buffer+i),0);		
+		} else {
+			for (i=0;i<0x100;i++) mem_writeb((PhysPt)(buffer+i),0);
+		}
+	}
 
 	/* Fill common data */
 	MEM_BlockWrite(buffer,(void *)"VESA",4);				//Identification
@@ -198,49 +212,62 @@ uint8_t VESA_GetSVGAInformation(uint16_t seg,uint16_t off) {
 	else if (!int10.vesa_oldvbe10) mem_writew(buffer+0x04,0x102);	//Vesa version 1.2
 	else mem_writew(buffer+0x04,0x100);						//Vesa version 1.0
 	if (vbe2) {
-        vbe2_pos=256+off;
+		vbe2_pos=256+off;
 
-		mem_writed(buffer+0x06,RealMake(seg,vbe2_pos));
-		for (i=0;i<sizeof(string_oem);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_oem[i]);
-		mem_writew(buffer+0x14,0x200);					//VBE 2 software revision
-		mem_writed(buffer+0x16,RealMake(seg,vbe2_pos));
-		for (i=0;i<sizeof(string_vendorname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_vendorname[i]);
-		mem_writed(buffer+0x1a,RealMake(seg,vbe2_pos));
-		for (i=0;i<sizeof(string_productname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_productname[i]);
-		mem_writed(buffer+0x1e,RealMake(seg,vbe2_pos));
-		for (i=0;i<sizeof(string_productrev);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_productrev[i]);
-    } else {
-        vbe2_pos=0x20+off;
+		if (svgaCard == SVGA_DOSBoxIG) {
+			mem_writed(buffer+0x06,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(dosboxig_string_oem);i++) real_writeb(seg,vbe2_pos++,(uint8_t)dosboxig_string_oem[i]);
+			mem_writew(buffer+0x14,0x200);					//VBE 2 software revision
+			mem_writed(buffer+0x16,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(dosboxig_string_vendorname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)dosboxig_string_vendorname[i]);
+			mem_writed(buffer+0x1a,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(dosboxig_string_productname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)dosboxig_string_productname[i]);
+			mem_writed(buffer+0x1e,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(dosboxig_string_productrev);i++) real_writeb(seg,vbe2_pos++,(uint8_t)dosboxig_string_productrev[i]);
+		}
+		else {
+			mem_writed(buffer+0x06,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(string_oem);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_oem[i]);
+			mem_writew(buffer+0x14,0x200);					//VBE 2 software revision
+			mem_writed(buffer+0x16,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(string_vendorname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_vendorname[i]);
+			mem_writed(buffer+0x1a,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(string_productname);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_productname[i]);
+			mem_writed(buffer+0x1e,RealMake(seg,vbe2_pos));
+			for (i=0;i<sizeof(string_productrev);i++) real_writeb(seg,vbe2_pos++,(uint8_t)string_productrev[i]);
+		}
+	} else {
+		vbe2_pos=0x20+off;
 
-        mem_writed(buffer+0x06,int10.rom.oemstring);	//Oemstring
+		mem_writed(buffer+0x06,int10.rom.oemstring);	//Oemstring
 	}
 
-    if (vesa_bios_modelist_in_info) {
-        /* put the modelist into the VBE struct itself, as modern BIOSes like to do.
-         * NOTICE: This limits the modelist to what is able to fit! Extended modes may not fit, which is why the option is OFF by default. */
-        uint16_t modesg = int10.rom.vesa_modes >> 16;
-        uint16_t modoff = int10.rom.vesa_modes & 0xFFFF;
+	if (vesa_bios_modelist_in_info) {
+		/* put the modelist into the VBE struct itself, as modern BIOSes like to do.
+		 * NOTICE: This limits the modelist to what is able to fit! Extended modes may not fit, which is why the option is OFF by default. */
+		uint16_t modesg = int10.rom.vesa_modes >> 16;
+		uint16_t modoff = int10.rom.vesa_modes & 0xFFFF;
 
-        mem_writed(buffer+0x0e,RealMake(seg,vbe2_pos));	//VESA Mode list
+		mem_writed(buffer+0x0e,RealMake(seg,vbe2_pos));	//VESA Mode list
 
-        do {
-            if (vbe2) {
-                if (vbe2_pos >= (509+off)) break;
-            }
-            else {
-                if (vbe2_pos >= (253+off)) break;
-            }
-            uint16_t m = real_readw(modesg,modoff);
-            if (m == 0xFFFF) break;
-            real_writew(seg,vbe2_pos,m);
-            vbe2_pos += 2;
-            modoff += 2;
-        } while (1);
-        real_writew(seg,vbe2_pos,0xFFFF);
-    }
-    else {
-        mem_writed(buffer+0x0e,int10.rom.vesa_modes);	//VESA Mode list
-    }
+		do {
+			if (vbe2) {
+				if (vbe2_pos >= (509+off)) break;
+			}
+			else {
+				if (vbe2_pos >= (253+off)) break;
+			}
+			uint16_t m = real_readw(modesg,modoff);
+			if (m == 0xFFFF) break;
+			real_writew(seg,vbe2_pos,m);
+			vbe2_pos += 2;
+			modoff += 2;
+		} while (1);
+		real_writew(seg,vbe2_pos,0xFFFF);
+	}
+	else {
+		mem_writed(buffer+0x0e,int10.rom.vesa_modes);	//VESA Mode list
+	}
 
 	mem_writed(buffer+0x0a,(enable_vga_8bit_dac ? 1 : 0));		//Capabilities and flags
 	mem_writew(buffer+0x12,(uint16_t)(GetReportedVideoMemorySize()/(64*1024))); // memory size in 64kb blocks
@@ -261,17 +288,17 @@ uint8_t VESA_GetSVGAModeInformation(uint16_t mode,uint16_t seg,uint16_t off) {
 	while (ModeList_VGA[i].mode!=0xffff) {
 		/* Hack for VBE 1.2 modes and 24/32bpp ambiguity */
 		if (ModeList_VGA[i].mode >= 0x100 && ModeList_VGA[i].mode <= 0x11F &&
-            !(ModeList_VGA[i].special & _USER_MODIFIED) &&
-			((ModeList_VGA[i].type == M_LIN32 && !vesa12_modes_32bpp) ||
-			 (ModeList_VGA[i].type == M_LIN24 && vesa12_modes_32bpp))) {
+				!(ModeList_VGA[i].special & _USER_MODIFIED) &&
+				((ModeList_VGA[i].type == M_LIN32 && !vesa12_modes_32bpp) ||
+				 (ModeList_VGA[i].type == M_LIN24 && vesa12_modes_32bpp))) {
 			/* ignore */
 			i++;
 		}
-        /* ignore deleted modes */
-        else if (ModeList_VGA[i].type == M_ERROR) {
-            /* ignore */
-            i++;
-        }
+		/* ignore deleted modes */
+		else if (ModeList_VGA[i].type == M_ERROR) {
+			/* ignore */
+			i++;
+		}
 		else if (mode==ModeList_VGA[i].mode)
 			goto foundit;
 		else
@@ -282,14 +309,14 @@ foundit:
 	if ((int10.vesa_oldvbe) && (ModeList_VGA[i].mode>=0x120)) return 0x01;
 	VideoModeBlock * mblock=&ModeList_VGA[i];
 
-    /* Don't allow querying modes the SVGA card does not accept,
-     * unless the user modified the mode. */
-    if (svga.accepts_mode && !(mblock->special & _USER_MODIFIED)) {
+	/* Don't allow querying modes the SVGA card does not accept,
+	 * unless the user modified the mode. */
+	if (svga.accepts_mode && !(mblock->special & _USER_MODIFIED)) {
 		if (!svga.accepts_mode(mode)) return 0x01;
 	}
 
-    /* do not return information on deleted modes */
-    if (mblock->type == M_ERROR) return 0x01;
+	/* do not return information on deleted modes */
+	if (mblock->type == M_ERROR) return 0x01;
 
 	bool allow_res = allow_vesa_lowres_modes ||
 		(ModeList_VGA[i].swidth >= 640 && ModeList_VGA[i].sheight >= 400);
@@ -297,139 +324,139 @@ foundit:
 	unsigned int cwidth = (mblock->pitch != 0) ? mblock->pitch : mblock->swidth;
 
 	switch (mblock->type) {
-	case M_PACKED4:
-		if (!allow_vesa_4bpp_packed && !(ModeList_VGA[i].mode >= 0x202 && ModeList_VGA[i].mode <= 0x208)) return VESA_FAIL;//TODO: New option to disable
-		pageSize = mblock->sheight * cwidth/2;
-		adj = hack_lfb_xadjust / 2;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)((((cwidth+15U)/8U)&(~1U))*4)); /* NTS: 4bpp requires even value due to VGA registers, round up */
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,4);
-			var_write(&minfo.MemoryModel,4);	//packed pixel
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_LIN4:
-		if (!allow_vesa_4bpp) return VESA_FAIL;
-		pageSize = mblock->sheight * (uint16_t)(((cwidth+15U)/8U)&(~1U));
-		adj = hack_lfb_xadjust / 8;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)(((cwidth+15U)/8U)&(~1U))); /* NTS: 4bpp requires even value due to VGA registers, round up */
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x4);
-			var_write(&minfo.BitsPerPixel,4);   // bits per pixel is 4 as specified by VESA BIOS 2.0 specification
-			var_write(&minfo.MemoryModel,3);	//ega planar mode
-		}
-		modeAttributes = 0x1b;	// Color, graphics, no linear buffer
-		break;
-	case M_LIN8:
-		if (!allow_vesa_8bpp || !allow_res) return VESA_FAIL;
-		pageSize = mblock->sheight * cwidth;
-		adj = hack_lfb_xadjust;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)cwidth);
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,8);
-			var_write(&minfo.MemoryModel,4);		//packed pixel
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_LIN15:
-		if (!allow_vesa_15bpp || !allow_res) return VESA_FAIL;
-		pageSize = mblock->sheight * cwidth*2;
-		adj = hack_lfb_xadjust * 2;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*2));
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,15);
-			var_write(&minfo.MemoryModel,6);	//HiColour
-			var_write(&minfo.RedMaskSize,5);
-			var_write(&minfo.RedMaskPos,10);
-			var_write(&minfo.GreenMaskSize,5);
-			var_write(&minfo.GreenMaskPos,5);
-			var_write(&minfo.BlueMaskSize,5);
-			var_write(&minfo.BlueMaskPos,0);
-			var_write(&minfo.ReservedMaskSize,0x01);
-			var_write(&minfo.ReservedMaskPos,0x0f);
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_LIN16:
-		if (!allow_vesa_16bpp || !allow_res) return VESA_FAIL;
-		pageSize = mblock->sheight * cwidth*2;
-		adj = hack_lfb_xadjust * 2;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*2));
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,16);
-			var_write(&minfo.MemoryModel,6);	//HiColour
-			var_write(&minfo.RedMaskSize,5);
-			var_write(&minfo.RedMaskPos,11);
-			var_write(&minfo.GreenMaskSize,6);
-			var_write(&minfo.GreenMaskPos,5);
-			var_write(&minfo.BlueMaskSize,5);
-			var_write(&minfo.BlueMaskPos,0);
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_LIN24:
-		if (!allow_vesa_24bpp || !allow_res) return VESA_FAIL;
-		if (mode >= 0x120 && !allow_explicit_vesa_24bpp) return VESA_FAIL;
-		pageSize = mblock->sheight * cwidth*3;
-		adj = hack_lfb_xadjust * 3;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*3));
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,24);
-			var_write(&minfo.MemoryModel,6);	//HiColour
-			var_write(&minfo.RedMaskSize,8);
-			var_write(&minfo.RedMaskPos,0x10);
-			var_write(&minfo.GreenMaskSize,0x8);
-			var_write(&minfo.GreenMaskPos,0x8);
-			var_write(&minfo.BlueMaskSize,0x8);
-			var_write(&minfo.BlueMaskPos,0x0);
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_LIN32:
-		if (!allow_vesa_32bpp || !allow_res) return VESA_FAIL;
-		pageSize = mblock->sheight * cwidth*4;
-		adj = hack_lfb_xadjust * 4;
-		var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*4));
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,32);
-			var_write(&minfo.MemoryModel,6);	//HiColour
-			var_write(&minfo.RedMaskSize,8);
-			var_write(&minfo.RedMaskPos,0x10);
-			var_write(&minfo.GreenMaskSize,0x8);
-			var_write(&minfo.GreenMaskPos,0x8);
-			var_write(&minfo.BlueMaskSize,0x8);
-			var_write(&minfo.BlueMaskPos,0x0);
-			var_write(&minfo.ReservedMaskSize,0x8);
-			var_write(&minfo.ReservedMaskPos,0x18);
-		}
-		modeAttributes = 0x1b;	// Color, graphics
-		if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
-		break;
-	case M_TEXT:
-		if (!allow_vesa_tty) return VESA_FAIL;
-		adj = hack_lfb_xadjust / 8;
-		pageSize = mblock->sheight * cwidth/8;
-		var_write(&minfo.BytesPerScanLine, (uint16_t)(mblock->twidth * 2));
-		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x1);
-			var_write(&minfo.BitsPerPixel,4);
-			var_write(&minfo.MemoryModel,0);	// text
-		}
-		modeAttributes = 0x0f;	//Color, text, bios output
-		break;
-	default:
-		return VESA_FAIL;
+		case M_PACKED4:
+			if (!allow_vesa_4bpp_packed && !(ModeList_VGA[i].mode >= 0x202 && ModeList_VGA[i].mode <= 0x208)) return VESA_FAIL;//TODO: New option to disable
+			pageSize = mblock->sheight * cwidth/2;
+			adj = hack_lfb_xadjust / 2;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)((((cwidth+15U)/8U)&(~1U))*4)); /* NTS: 4bpp requires even value due to VGA registers, round up */
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,4);
+				var_write(&minfo.MemoryModel,4);	//packed pixel
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_LIN4:
+			if (!allow_vesa_4bpp) return VESA_FAIL;
+			pageSize = mblock->sheight * (uint16_t)(((cwidth+15U)/8U)&(~1U));
+			adj = hack_lfb_xadjust / 8;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)(((cwidth+15U)/8U)&(~1U))); /* NTS: 4bpp requires even value due to VGA registers, round up */
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x4);
+				var_write(&minfo.BitsPerPixel,4);   // bits per pixel is 4 as specified by VESA BIOS 2.0 specification
+				var_write(&minfo.MemoryModel,3);	//ega planar mode
+			}
+			modeAttributes = 0x1b;	// Color, graphics, no linear buffer
+			break;
+		case M_LIN8:
+			if (!allow_vesa_8bpp || !allow_res) return VESA_FAIL;
+			pageSize = mblock->sheight * cwidth;
+			adj = hack_lfb_xadjust;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)cwidth);
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,8);
+				var_write(&minfo.MemoryModel,4);		//packed pixel
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_LIN15:
+			if (!allow_vesa_15bpp || !allow_res) return VESA_FAIL;
+			pageSize = mblock->sheight * cwidth*2;
+			adj = hack_lfb_xadjust * 2;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*2));
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,15);
+				var_write(&minfo.MemoryModel,6);	//HiColour
+				var_write(&minfo.RedMaskSize,5);
+				var_write(&minfo.RedMaskPos,10);
+				var_write(&minfo.GreenMaskSize,5);
+				var_write(&minfo.GreenMaskPos,5);
+				var_write(&minfo.BlueMaskSize,5);
+				var_write(&minfo.BlueMaskPos,0);
+				var_write(&minfo.ReservedMaskSize,0x01);
+				var_write(&minfo.ReservedMaskPos,0x0f);
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_LIN16:
+			if (!allow_vesa_16bpp || !allow_res) return VESA_FAIL;
+			pageSize = mblock->sheight * cwidth*2;
+			adj = hack_lfb_xadjust * 2;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*2));
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,16);
+				var_write(&minfo.MemoryModel,6);	//HiColour
+				var_write(&minfo.RedMaskSize,5);
+				var_write(&minfo.RedMaskPos,11);
+				var_write(&minfo.GreenMaskSize,6);
+				var_write(&minfo.GreenMaskPos,5);
+				var_write(&minfo.BlueMaskSize,5);
+				var_write(&minfo.BlueMaskPos,0);
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_LIN24:
+			if (!allow_vesa_24bpp || !allow_res) return VESA_FAIL;
+			if (mode >= 0x120 && !allow_explicit_vesa_24bpp) return VESA_FAIL;
+			pageSize = mblock->sheight * cwidth*3;
+			adj = hack_lfb_xadjust * 3;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*3));
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,24);
+				var_write(&minfo.MemoryModel,6);	//HiColour
+				var_write(&minfo.RedMaskSize,8);
+				var_write(&minfo.RedMaskPos,0x10);
+				var_write(&minfo.GreenMaskSize,0x8);
+				var_write(&minfo.GreenMaskPos,0x8);
+				var_write(&minfo.BlueMaskSize,0x8);
+				var_write(&minfo.BlueMaskPos,0x0);
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_LIN32:
+			if (!allow_vesa_32bpp || !allow_res) return VESA_FAIL;
+			pageSize = mblock->sheight * cwidth*4;
+			adj = hack_lfb_xadjust * 4;
+			var_write(&minfo.BytesPerScanLine,(uint16_t)(cwidth*4));
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,32);
+				var_write(&minfo.MemoryModel,6);	//HiColour
+				var_write(&minfo.RedMaskSize,8);
+				var_write(&minfo.RedMaskPos,0x10);
+				var_write(&minfo.GreenMaskSize,0x8);
+				var_write(&minfo.GreenMaskPos,0x8);
+				var_write(&minfo.BlueMaskSize,0x8);
+				var_write(&minfo.BlueMaskPos,0x0);
+				var_write(&minfo.ReservedMaskSize,0x8);
+				var_write(&minfo.ReservedMaskPos,0x18);
+			}
+			modeAttributes = 0x1b;	// Color, graphics
+			if (!int10.vesa_nolfb && !int10.vesa_oldvbe) modeAttributes |= 0x80;	// linear framebuffer
+			break;
+		case M_TEXT:
+			if (!allow_vesa_tty) return VESA_FAIL;
+			adj = hack_lfb_xadjust / 8;
+			pageSize = mblock->sheight * cwidth/8;
+			var_write(&minfo.BytesPerScanLine, (uint16_t)(mblock->twidth * 2));
+			if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
+				var_write(&minfo.NumberOfPlanes,0x1);
+				var_write(&minfo.BitsPerPixel,4);
+				var_write(&minfo.MemoryModel,0);	// text
+			}
+			modeAttributes = 0x0f;	//Color, text, bios output
+			break;
+		default:
+			return VESA_FAIL;
 	}
 	if (pageSize & 0xFFFFu) {
 		// It is documented that many applications assume 64k-aligned page sizes
@@ -547,16 +574,29 @@ uint8_t VESA_SetCPUWindow(uint8_t window,uint16_t address) {
 	if (CurMode->type == M_LIN4) calcmemsize /= 4u; /* 4bpp planar = 4 bytes per video memory byte */
 
 	if ((!vesa_bank_switch_window_range_check) || (uint32_t)(address)*vga.svga.bank_size<calcmemsize) { /* range check, or silently truncate address depending on dosbox-x.conf setting */
-		IO_Write(0x3d4,0x6a);
-		IO_Write(0x3d5,(uint8_t)address); /* NTS: in vga_s3.cpp this is a 7-bit field, wraparound will occur at address >= 128 but only if emulating a full 64KB bank as normal */
+		if (svgaCard == SVGA_DOSBoxIG) {
+			dosbox_int_push_save_state();
+			dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_BANKWINDOW,(uint32_t)address * (uint32_t)vga.svga.bank_size);
+			dosbox_int_pop_save_state();
+			VGA_SetupHandlers();
+		}
+		else {
+			IO_Write(0x3d4,0x6a);
+			IO_Write(0x3d5,(uint8_t)address); /* NTS: in vga_s3.cpp this is a 7-bit field, wraparound will occur at address >= 128 but only if emulating a full 64KB bank as normal */
+		}
 		return VESA_SUCCESS;
 	} else return VESA_FAIL;
 }
 
 uint8_t VESA_GetCPUWindow(uint8_t window,uint16_t & address) {
 	if (window && !vesa_bank_switch_window_mirror) return VESA_FAIL;
-	IO_Write(0x3d4,0x6a);
-	address=IO_Read(0x3d5);
+	if (svgaCard == SVGA_DOSBoxIG) {
+		address=vga.svga.bank_read_full / vga.svga.bank_size;
+	}
+	else {
+		IO_Write(0x3d4,0x6a);
+		address=IO_Read(0x3d5);
+	}
 	return VESA_SUCCESS;
 }
 
@@ -609,7 +649,7 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 	Bitu pixels_per_offset;
 	Bitu bytes_per_offset = 8;
 	Bitu vmemsize = GetReportedVideoMemorySize();
-	Bitu new_offset = vga.config.scan_len;
+	Bitu new_offset = vga.dosboxig.svga ? vga.dosboxig.bytes_per_scanline : vga.config.scan_len;
 	Bitu screen_height = CurMode->sheight;
 	Bitu max_offset;
 
@@ -617,40 +657,77 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 	if (CurMode->special & _S3_POW2_STRIDE)
 		return VESA_MODE_UNSUPPORTED;
 
-	switch (CurMode->type) {
-		case M_TEXT:
-			vmemsize = 0x8000;      // we have only the 32kB window here
-			screen_height = CurMode->theight;
-			pixels_per_offset = 16; // two characters each 8 pixels wide
-			bytes_per_offset = 4;   // 2 characters + 2 attributes
-			break;
-		case M_LIN4:
-			bytes_per_offset = 2;
-			pixels_per_offset = 16;
-			vmemsize /= 4u; /* because planar VGA */
-			break;
-		case M_PACKED4:
-			pixels_per_offset = 16;
-			break;
-		case M_LIN8:
-			pixels_per_offset = 8;
-			break;
-		case M_LIN15:
-		case M_LIN16:
-			pixels_per_offset = 4;
-			break;
-		case M_LIN24:
-			pixels_per_offset = 8;
-			bytes_per_offset = 24;
-			break;
-		case M_LIN32:
-			pixels_per_offset = 2;
-			break;
-		default:
-			return VESA_MODE_UNSUPPORTED;
+	if (vga.dosboxig.svga) {
+		switch (CurMode->type) {
+			case M_LIN4:
+				bytes_per_offset = 1;
+				pixels_per_offset = 8;
+				vmemsize /= 4u; /* because planar VGA */
+				break;
+			case M_PACKED4:
+				bytes_per_offset = 1;
+				pixels_per_offset = 2;
+				break;
+			case M_LIN8:
+				bytes_per_offset = 1;
+				pixels_per_offset = 1;
+				break;
+			case M_LIN15:
+			case M_LIN16:
+				bytes_per_offset = 2;
+				pixels_per_offset = 1;
+				break;
+			case M_LIN24:
+				bytes_per_offset = 3;
+				pixels_per_offset = 1;
+				break;
+			case M_LIN32:
+				bytes_per_offset = 4;
+				pixels_per_offset = 1;
+				break;
+			default:
+				return VESA_MODE_UNSUPPORTED;
+		}
+
+		max_offset = 8192;
+	}
+	else {
+		switch (CurMode->type) {
+			case M_TEXT:
+				vmemsize = 0x8000;      // we have only the 32kB window here
+				screen_height = CurMode->theight;
+				pixels_per_offset = 16; // two characters each 8 pixels wide
+				bytes_per_offset = 4;   // 2 characters + 2 attributes
+				break;
+			case M_LIN4:
+				bytes_per_offset = 2;
+				pixels_per_offset = 16;
+				vmemsize /= 4u; /* because planar VGA */
+				break;
+			case M_PACKED4:
+				pixels_per_offset = 16;
+				break;
+			case M_LIN8:
+				pixels_per_offset = 8;
+				break;
+			case M_LIN15:
+			case M_LIN16:
+				pixels_per_offset = 4;
+				break;
+			case M_LIN24:
+				pixels_per_offset = 8;
+				bytes_per_offset = 24;
+				break;
+			case M_LIN32:
+				pixels_per_offset = 2;
+				break;
+			default:
+				return VESA_MODE_UNSUPPORTED;
+		}
+
+		max_offset = S3_MAX_OFFSET;
 	}
 
-	max_offset = S3_MAX_OFFSET;
 	if ((max_offset * bytes_per_offset * screen_height) > vmemsize)
 		max_offset = vmemsize / (bytes_per_offset * screen_height);
 
@@ -671,12 +748,19 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 			// TODO: Add dosbox-x.conf option to control which behavior is emulated.
 			if (new_offset > max_offset) new_offset = max_offset;
 
-			if (CurMode->type == M_LIN24)
-				vga.config.scan_len = new_offset * 3u;
-			else
-				vga.config.scan_len = new_offset;
+			if (vga.dosboxig.svga) {
+				dosbox_int_push_save_state();
+				dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_FMT_BYTESPERSCANLINE,(new_offset * bytes_per_offset) | DOSBOX_ID_REG_VGAIG_FMT_MASK);
+				dosbox_int_pop_save_state();
+			}
+			else {
+				if (CurMode->type == M_LIN24)
+					vga.config.scan_len = new_offset * 3u;
+				else
+					vga.config.scan_len = new_offset;
 
-			VGA_CheckScanLength();
+				VGA_CheckScanLength();
+			}
 			break;
 
 		case 0x01: // get current scanline length
@@ -696,12 +780,19 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 			// TODO: Add dosbox-x.conf option to control which behavior is emulated.
 			if (new_offset > max_offset) new_offset = max_offset;
 
-			if (CurMode->type == M_LIN24)
-				vga.config.scan_len = new_offset * 3u;
-			else
-				vga.config.scan_len = new_offset;
+			if (vga.dosboxig.svga) {
+				dosbox_int_push_save_state();
+				dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_FMT_BYTESPERSCANLINE,(new_offset * bytes_per_offset) | DOSBOX_ID_REG_VGAIG_FMT_MASK);
+				dosbox_int_pop_save_state();
+			}
+			else {
+				if (CurMode->type == M_LIN24)
+					vga.config.scan_len = new_offset * 3u;
+				else
+					vga.config.scan_len = new_offset;
 
-			VGA_CheckScanLength();
+				VGA_CheckScanLength();
+			}
 			break;
 
 		case 0x03: // get maximum scan line length
@@ -738,16 +829,53 @@ uint8_t VESA_SetDisplayStart(uint16_t x,uint16_t y,bool wait) {
 	Bitu pixels_per_offset;
 	Bitu panning_factor = 1;
 
-	/* this special hack is for the Windows 3.1 S3 driver in "640x480 (1MB) 16 million colors" mode which does no scan line or display offset calls at all */
-	if (CurMode->special & _S3_POW2_STRIDE)
-		return VESA_MODE_UNSUPPORTED;
-
 	if (!wait) {
 		if (vesa_set_display_vsync_wait > 0)
 			wait = true;
 		else if (vesa_set_display_vsync_wait < 0)
 			wait = int10.vesa_oldvbe;
 	}
+
+	if (vga.dosboxig.svga) {
+		uint32_t offset = vga.dosboxig.bytes_per_scanline * y;
+		uint8_t hpel = 0;
+
+		switch (CurMode->type) {
+			case M_PACKED4:
+				offset += x >> 1u;
+				hpel = x & 1u;
+				break;
+			case M_LIN8:
+				offset += x;
+				break;
+			case M_LIN15:
+			case M_LIN16:
+				offset += x * 2u;
+				break;
+			case M_LIN24:
+				offset += x * 3u;
+				break;
+			case M_LIN32:
+				offset += x * 4u;
+				break;
+			default:
+				return VESA_MODE_UNSUPPORTED;
+		}
+
+		dosbox_int_push_save_state();
+		dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_DISPLAYOFFSET,offset);
+		dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_HVPELSCALE,hpel);
+		dosbox_int_pop_save_state();
+
+		// Wait for retrace if requested
+		if (wait) CALLBACK_RunRealFar(RealSeg(int10.rom.wait_retrace),RealOff(int10.rom.wait_retrace));
+
+		return VESA_SUCCESS;
+	}
+
+	/* this special hack is for the Windows 3.1 S3 driver in "640x480 (1MB) 16 million colors" mode which does no scan line or display offset calls at all */
+	if (CurMode->special & _S3_POW2_STRIDE)
+		return VESA_MODE_UNSUPPORTED;
 
 	switch (CurMode->type) {
 	case M_TEXT:
@@ -793,7 +921,7 @@ uint8_t VESA_SetDisplayStart(uint16_t x,uint16_t y,bool wait) {
 	IO_Read(0x3da);              // reset attribute flipflop
 	IO_Write(0x3c0,0x13 | 0x20); // panning register, screen on
 	IO_Write(0x3c0,(uint8_t)new_panning);
-	
+
 	// Wait for retrace if requested
 	if (wait) CALLBACK_RunRealFar(RealSeg(int10.rom.wait_retrace),RealOff(int10.rom.wait_retrace));
 
@@ -803,6 +931,39 @@ uint8_t VESA_SetDisplayStart(uint16_t x,uint16_t y,bool wait) {
 uint8_t VESA_GetDisplayStart(uint16_t & x,uint16_t & y) {
 	Bitu pixels_per_offset;
 	Bitu panning_factor = 1;
+
+	if (vga.dosboxig.svga) {
+		if (vga.dosboxig.bytes_per_scanline) {
+			x = vga.dosboxig.display_offset % vga.dosboxig.bytes_per_scanline;
+			y = vga.dosboxig.display_offset / vga.dosboxig.bytes_per_scanline;
+		}
+		else {
+			x = y = 0;
+		}
+
+		switch (CurMode->type) {
+			case M_PACKED4:
+				x *= 2u;
+				x += vga.dosboxig.hpel & 1u;
+				break;
+			case M_LIN8:
+				break;
+			case M_LIN15:
+			case M_LIN16:
+				x /= 2u;
+				break;
+			case M_LIN24:
+				x /= 3u;
+				break;
+			case M_LIN32:
+				x /= 4u;
+				break;
+			default:
+				return VESA_MODE_UNSUPPORTED;
+		}
+
+		return VESA_SUCCESS;
+	}
 
 	switch (CurMode->type) {
 	case M_TEXT:
@@ -832,6 +993,7 @@ uint8_t VESA_GetDisplayStart(uint16_t & x,uint16_t & y) {
 	IO_Read(0x3da);              // reset attribute flipflop
 	IO_Write(0x3c0,0x13 | 0x20); // panning register, screen on
 	uint8_t panning = IO_Read(0x3c1);
+	if ((CurMode->type == M_TEXT) && (panning > 7)) panning = 0;
 
 	/* FIXME: Why does this happen with VBETEST.EXE and more than 1MB of RAM? */
 	if (vga.config.scan_len == 0) {
@@ -856,8 +1018,16 @@ static Bitu VESA_SetWindow(void) {
 }
 
 static Bitu VESA_PMSetWindow(void) {
-	IO_Write(0x3d4,0x6a);
-	IO_Write(0x3d5,reg_dl);
+	if (svgaCard == SVGA_DOSBoxIG) {
+		dosbox_int_push_save_state();
+		dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_BANKWINDOW,(uint32_t)reg_dl * (uint32_t)vga.svga.bank_size);
+		dosbox_int_pop_save_state();
+		VGA_SetupHandlers();
+	}
+	else {
+		IO_Write(0x3d4,0x6a);
+		IO_Write(0x3d5,reg_dl);
+	}
 	return CBRET_NONE;
 }
 static Bitu VESA_PMSetPalette(void) {
@@ -874,7 +1044,16 @@ static Bitu VESA_PMSetPalette(void) {
 }
 static Bitu VESA_PMSetStart(void) {
 	uint32_t start = (uint32_t)(((unsigned int)reg_dx << 16u) | (unsigned int)reg_cx);
-	vga.config.display_start = start;
+
+	if (vga.dosboxig.svga) {
+		dosbox_int_push_save_state();
+		dosbox_integration_trigger_write_direct32(DOSBOX_ID_REG_VGAIG_DISPLAYOFFSET,start);
+		dosbox_int_pop_save_state();
+	}
+	else {
+		vga.config.display_start = start;
+	}
+
 	return CBRET_NONE;
 }
 
@@ -994,17 +1173,21 @@ void INT10_SetupVESA(void) {
 	if (svgaCard == SVGA_None) return;
 
 	/* Put the mode list somewhere in memory */
-    int10.rom.vesa_alloc_modes = (uint16_t)(~0u);
-    int10.rom.vesa_modes = RealMake(0xc000,int10.rom.used);
-    modecount = INT10_WriteVESAModeList(0xFFFF/*max mode count*/);
-    int10.rom.vesa_alloc_modes = (uint16_t)modecount;
-    int10.rom.used += (uint16_t)(modecount * 2u);
+	int10.rom.vesa_alloc_modes = (uint16_t)(~0u);
+	int10.rom.vesa_modes = RealMake(0xc000,int10.rom.used);
+	modecount = INT10_WriteVESAModeList(0xFFFF/*max mode count*/);
+	int10.rom.vesa_alloc_modes = (uint16_t)modecount;
+	int10.rom.used += (uint16_t)(modecount * 2u);
 	phys_writew(PhysMake(0xc000,int10.rom.used),0xffff);
 	int10.rom.used+=2;
 	int10.rom.oemstring=RealMake(0xc000,int10.rom.used);
-	Bitu len=(Bitu)(strlen(string_oem)+1);
-	for (i=0;i<len;i++) {
-		phys_writeb(0xc0000u+(int10.rom.used++),(uint8_t)string_oem[i]);
+	if (svgaCard == SVGA_DOSBoxIG) {
+		const Bitu len=(Bitu)(strlen(dosboxig_string_oem)+1);
+		for (i=0;i<len;i++) phys_writeb(0xc0000u+(int10.rom.used++),(uint8_t)dosboxig_string_oem[i]);
+	}
+	else {
+		const Bitu len=(Bitu)(strlen(string_oem)+1);
+		for (i=0;i<len;i++) phys_writeb(0xc0000u+(int10.rom.used++),(uint8_t)string_oem[i]);
 	}
 	/* Prepare the real mode interface */
 	int10.rom.wait_retrace=RealMake(0xc000,int10.rom.used);

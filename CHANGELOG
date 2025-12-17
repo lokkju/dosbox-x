@@ -1,7 +1,209 @@
-Next
+NEXT VERSION
+  - A patch was submitted to DOSLIB DSXMENU to incorporate non-selectable
+    informational lines of text. Incorporate the updated DSXMENU binaries
+    into DOSBox-X (joncampbell123).
+  - Wrote IPS patching tools IPSMAKE and IPSPATCH in DOSLIB, then incorporated
+    them as builtin executables on drive Z: under Z:\PATCHING. You can
+    now use IPS patch files to "ROM hack" your MS-DOS games. (joncampbell123)
+  - Add map13/map14 CGA/HGC like interleaved rendering support for VGA
+    256-color mode. There is a game engine in development that is willing to
+    use such oddball modes. (joncampbell123)
+
+2025.12.01
+  - Video debug overlay: For Tandy and PCjr emulation, add information on
+    the screen that shows the line mask, display and cpu memory banks and
+    the corresponding segment values, which may aid in debugging issues
+    with games and reveal any remapping or page flipping (joncampbell123).
+  - Tandy emulation: Add the string "Tandy" somewhere in the DOS kernel
+    at startup if machine=tandy. The game "The Train: Escape to Normandy"
+    scans from FFFF:0000 for the string "Tandy" which of course wraps
+    around to the first 64KB of memory where the DOS kernel resides. If
+    it does not see this string, it does not think it is running on a Tandy.
+    Such a detection routine will obviously break if you're on a 286 based
+    Tandy with HMA enabled, or you're running normal MS-DOS on a Tandy
+    system. This change allows the game to run (joncampbell123).
+  - Tseng ET4000 emulation: Mode 0x24 is unusual in that it is a 130x28
+    text mode with a 13-pixel high character cell. The ET4000 VGA BIOS
+    apparently has a specific font for that mode, so, incorporate that
+    font into DOSBox-X and use it for mode 0x24 (joncampbell123).
+  - Tseng ET4000 emulation: Fix modes 0x22/0x23/0x24 to match how the
+    actual VGA BIOS programs them. This fixes problems where the 132x25
+    mode was rendered only on the upper half of the screen (joncampbell123).
+  - Fix Tseng ET3000/ET4000 emulation bug where CGA graphics modes
+    were garbled. The main VGA emulation no longer uses M_CGA2/M_CGA4
+    and the ET4000 emulation needs to behave the same to fix the
+    graphics modes. Apply fix to ET3000 emulation as well. (joncampbell123).
+  - Some extra code in shell processing was preventing drive change commands
+    if the last character was a backslash i.e. "a:\" instead of "a:".
+    Fixed. (joncampbell123).
+  - INT 21h AH=4Bh EXEC: Real MS-DOS returns a nonzero value like 0x3E01.
+    A buggy version of Magic Pockets fails to call INT 21 AH=4Dh to read
+    the INTRO.EXE exit code and expects AL to just be nonzero to continue
+    to the game. So to make it work properly (kind of), return a nonzero
+    value. (joncampbell123).
+  - Tandy machine type: Many registers are WRITE ONLY according to SX
+    documentation, yet "Troubadours" likes to read/modify/write those
+    registers in what appears to be hand-rolled manual modesetting code
+    to set up 320x200 16-color mode, so, add code to respond to reads
+    from those ports with zeros and print a debug message to the log
+    about how DOS games are not supposed to read those registers. Make
+    the hand-rolled modesetting work by returning 0x00, rather than 0xFF.
+    The code will not set up the mode correctly if 0xFF is returned, but
+    will if 0x00 is returned. A side effect of this is that, since one
+    of the registers controls the RAM address used as video memory, this
+    moves it down to 512KB from base memory as well, which of course
+    easily corrupts the very end of the MCB chain unless you enable more
+    than 640KB of RAM and ask DOSBox-X to emulate the full Tandy 768KB
+    of conventional memory. Though the game still crashes very easily,
+    and in the exact same manner in both DOSBox-X and DOSBox SVN, this
+    fix does solve the problem where the game was only able to draw
+    2 out of 4 scanlines on the screen. (joncampbell123).
+  - Fix: Load GetDiskFreeSpaceExA at runtime to restore compatibility with
+    Win95RTM (emxd)
+  - Support for musl libc under Linux (repzilon)
+  - Utilize SDL2's keyboard capture logic to inhibit window manager shortcuts
+    (BenAckerley)
+  - Fix OpenGL resize / crash issue related to SDL and the internal GUI (rebb)
+  - Fix: missing floppy drive after harddisk boot (merubird)
+  - Fix crash on launch in MinGW and UCRT 64-bit builds (maron2000)
+  - Fix file open dialog encoding (maron2000)
+  - Allow controlling K-CG via BIOS interrupt (OPNA2608)
+  - Add debug feature memory find (Enmet)
+  - Fix turbo to allow burst mode and toggle mode (jez9999)
+  - Linters - fixup freedesktop metainfo and flatpak (rderooy)
+
+2025.10.07
+  - INT 21h AH=4Ah resize memory: Compact free blocks only at or after the
+    segment being resized, as MS-DOS is documented to do (joncampbell123).
+  - INT 21h AH=4Ah resize memory: Fix bug where, if asked to resize a previously
+    freed memory block and the block is not the last block in the MCB chain,
+    and the next block in the MCB chain is also free, the MCB management code
+    would correctly compact free blocks but then allocate according to the
+    old size of the freed MCB block, causing truncation of the MCB chain.
+    Fix for MCB chain truncation caused by California Games II DOS memory
+    management when running in Tandy graphics mode. (joncampbell123).
+  - Add dosbox.conf option, disabled by default, where if the MCB memory
+    chain is corrupted anywhere past the running program's memory block,
+    and it does anything to cause allocation, a new free memory block is
+    created to satisfy allocations instead of halting emulation. Some DOS
+    programs are a bit sloppy in a way that can corrupt the MCB chain.
+    When enabled, this behavior matches apparent MS-DOS behavior (joncampbell123).
+  - Debugger: DOS MCBS command now also prints the segment immediately
+    following the last MCB block (joncampbell123).
+  - Tseng ET3000/ET4000: Update Status register 3DAh behavior when emulating
+    Tseng chipsets to reflect Tseng datasheet, and VGAKIT SVGA detection code
+    expectations. Bit 7 is expected, as documented by Tseng, to be the inverse
+    of bit 3 (vertical retrace). Extended Start Register CRTC 33h must not
+    allow setting the upper 4 bits because Tseng only documents the bottom
+    four, and because VGAKIT requires it for Tseng detection (joncampbell123).
+  - Fix bug that, for machine=hercules, prevented Hercules palette shortcut
+    from changing colors when in graphics mode (joncampbell123).
+  - Remove mixer and VGA capture test modes from integration device. Update
+    integration device version number. Convert hardcoded magic constants used
+    in IG into constants in iglib.h which is now shared explicitly with the
+    iglib.h in DOSLIB. Add integration device interface to allow the guest
+    to read and set the CPU cycle count of the emulator. (joncampbell123).
+  - Fix INT 10h AH=0Eh bug where printing BEL triggered screen scroll up if
+    cursor beyond the last line. Fix for the Elder Scrolls Arena installer.
+    (joncampbell123).
+  - FAT filesystem driver (for disk images): If Elder Scrolls Arena calls
+    INT 21h to find files named *.65 (such as STATES.65) with an attribute mask
+    of 0xA (VOLUME LABEL | HIDDEN), ignore the VOLUME LABEL bit and scan
+    normally. The 0xA value is leftover from a divide operation used to make
+    the file name and is technically a bug in the game, though that happens
+    to work on real MS-DOS and the DOSBox/DOSBox-X local folder support code
+    anyway. This fix allows Elder Scrolls Arena to run from a mounted disk
+    image. (joncampbell123).
+  - FAT filesystem driver (for disk images): If Elder Scrolls Arena calls
+    INT 21h to find SAVEGAME.00 (yes, a specific name for some reason) with
+    an attribute mask of 0x7C (which represents... um... what?), ignore the
+    VOLUME LABEL bit so that players can load their saved games from the
+    menu instead of being told that the saved game that is clearly there on
+    the screen does not exist. What other weird random values of CX attribute
+    mask does this game use? (joncampbell123).
+  - PCI bus improvements : Allow device to see full size access (smunaut)
+  - Fix build error of SDL1 version on ArchLinux (possibly gcc-15) (maron2000)
+  - Enable building DOSBox-X on older macOS versions and add instructions
+    (maron2000)
+  - Add code page 951 in dialog box (1abcd)
+  - Fix failure of create/opening a temporary file for piping (maron2000)
+  - Create/open a temporary file to device_TMP for piping on Z: drive.
+    (maron2000)
+  - Convert message to UTF16 before calling messagebox function (Windows)
+    (maron2000)
+  - Added some new members to the MMX_reg union for big-endian platforms.
+    (alarixnia)
+  - Create directory if not exist before writing conf file. (maron2000)
+  - Fixed language files were still locked after loading is completed.
+    (maron2000)
+  - Fixed freeze when codepage switched to 3846, 3848. (maron2000)
+  - Fixed build error when internal debugger is disabled (maron2000)
+  - Show loaded conf file in log in full path (maron2000)
+  - Print syntax error if pipe has no command to pass output (maron2000)
+  - Add permanent option for initial DOSBox-X shell (maron2000)
+  - Fix errors when initializing fluidsynth (maron2000)
+  - PC-98: Redraw the function keys after updating them (bobsayshilol)
+  - Do not carriage return with a single LF('\n') (maron2000)
+  - Fix mapper not rendering anything on SDL2/Windows (aybe)
+  - Scale mapper according display resolution (aybe)
+  - Added applicable changes from SVN. (Allofich)
+    r4485: Enable writing to all planes when drawing pixels in EGA modes.
+    r4487: Correct panning of VESA text modes.
+    r4488: Correct comment about odd/even bit.
+    r4490: Set MCB ownership when *blocks==total at end of DOS_ResizeMemory.
+    r4492: Don't clear message queues of MPU-401 and compatibles on reset.
+    r4493: Handle EOF character in batch files as actual end of file.
+    r4494: Use 4-byte partial page mapping data.
+  - Replaced deprecated functions to enable building with FFmpeg 8 (maron2000)
+  - Fixed screen blanked when restoring minimized window in TTF mode (Windows
+    SDL1) (maron2000) 
+  - PC-98: Save Kanji CG access mode setting, restrict output accordingly
+    (OPNA2608)
+  - Added missing language options to Windows installers (maron2000)
+  - Debugger: IV must not truncate addresses to 16-bit (cmsautter)
+  - Debugger: Warn single-stepping may not work as expected with Dynamic core
+    (maron2000)
+  - MIDI: Show loaded Soundfont/ROM path only when required to. (maron2000)
+  - SDL2: Updated SDL2 library to version 2.32.10 (maron2000) 
+  - Apply aspect/scaling/clipping when using OpenGL shaders in windowed-mode
+    (rebb)
+  - Fixed file locking problem on Linux port (loops)
+  - Fixed typo in Linux man page (-date-host-forced option) (maron2000)
+  - Mention OPL in MIDI/OPL configuration dialog menu (maron2000)  
+
+2025.05.03
+  - Show TURBO status in title bar. (maron2000)
+  - Fixed MinGW32 builds failed using gcc15, due to a conflict in __inline__ 
+    macro. (lazka)
+  - Revise EGA/VGA emulation to treat the CRTC CGA/Hercules
+    CRTC bit remapping as bits to mask out, instead of defining
+    the upper limit of the memory mask. This makes the CGA mode
+    Engine page flipping test work. I initially had reservations
+    about whether or not real hardware did this, but, it would
+    make sense for hardware to do it that way. (joncampbell123)
+  - Updated libpng to version 1.6.47 (maron2000)
+  - Updated XCOPY to version 1.9a (maron2000)
+  - Updated SDL2 library to version 2.32.4 (maron2000)
+  - Fixed a build/install error due to using wildcards in Makefile.am, which is
+    not supported in GNU Automake. (maron2000)
+  - macOS: Install SDL2_net in CI workflow to enable internal modem support on
+    Release and Nightly SDL2 builds. (maron2000)
+  - Fixed buffer size to allocate missing byte for string terminator for 
+    savestate filename to prevent buffer overflow (arifogel)
+  - Fixed settings of yellow color in COLOR command (maron2000)
+  - Fixed COLOR command to match behavior on Windows (maron2000)
+  - Fixed INT21h AH=0a cursor position moved by bell due to keyboard buffer full
+    (maron2000)
+  - Fixed INT21h AH=01 echo behavior (maron2000)
+  - Replaced SetPixel with DIB Section Direct Memory Access for faster printing
+    (DwayneSelsig)
+  - Fixed creation of overlay special files (zyebytevt)
+  - PC-98 mode: Add INT 18h function AH=10h to control cursor blink.
+    Emulate documented side effect in that this call also hides the
+    cursor. The PC-98 port of Lemmings will no longer show a blinking
+    black box in the lower left corner. (joncampbell123)
   - Fixed Host key (F11, F12) handling in Codepage 932 (Japanese Shift-JIS).
     (maron2000)
-  - Fixed SSE PSADBW to match the Intel SDM. (fuel-pcbox) 
   - Bumped ESFMu to ver 1.2.6 (maron2000)
   - Fixed regression of adding a dot to CD labels when longer than 8 characters,
     required for games such as Descent 2 CD installer (maron2000)
@@ -24,6 +226,8 @@ Next
   - Fixed direct input of half-width kana (maron2000)
   - Fixed PC-98 INT 1Fh, AH=90h source and destination address (drachen6jp)
   - Fixed unnecessary trailing backslash in path name (maron2000)
+  - Fixed SSE MOVSS, MOVHPS, UNPCKLPS, UNPCKHPS, and PSADBW as well as
+    MMX PMULLW, PSUBUSB, and PSUBUSW, instruction implementations (fuel-pcbox)
 
 2025.02.01
   - Added new experimental dosbox.conf option that turns off the

@@ -287,7 +287,7 @@ int Program::WriteOut_NoParsing(const char * format, bool dbcs) {
 	uint16_t size = (uint16_t)strlen(format);
 	char const* buf = format;
 	char last2 = 0, last3 = 0;
-	int lastcol = 0, COLS=IS_PC98_ARCH?80:real_readw(BIOSMEM_SEG,BIOSMEM_NB_COLS);
+	int lastcol = 0;
 	uint8_t page=outcon?real_readb(BIOSMEM_SEG,BIOSMEM_CURRENT_PAGE):0;
 	bool lead=false;
 	dos.internal_output=true;
@@ -305,7 +305,7 @@ int Program::WriteOut_NoParsing(const char * format, bool dbcs) {
 		if (buf[i] == 0xA) {
 			if (last_written_character != 0xD) {out = 0xD;DOS_WriteFile(STDOUT,&out,&s);}
 			if (outcon) rcount++;
-		} else if (outcon && lead && CURSOR_POS_COL(page)==COLS-1 && !(TTF_using()
+		} else if (outcon && lead && CURSOR_POS_COL(page)==ncols-1 && !(TTF_using()
 #if defined(USE_TTF)
             && autoboxdraw
 #endif
@@ -313,7 +313,7 @@ int Program::WriteOut_NoParsing(const char * format, bool dbcs) {
 			out = 0xD;DOS_WriteFile(STDOUT,&out,&s);
 			out = 0xA;DOS_WriteFile(STDOUT,&out,&s);
 			rcount++;
-		} else if (outcon && !CURSOR_POS_COL(page) && lastcol == COLS-1)
+		} else if (outcon && !CURSOR_POS_COL(page) && lastcol == ncols-1)
 			rcount++;
 		lastcol=CURSOR_POS_COL(page);
 		last3=last2;last2=last_written_character;
@@ -711,7 +711,7 @@ private:
 		if (configdir) {
 			// write file to the default config directory
 			std::string config_path;
-			Cross::GetPlatformConfigDir(config_path);
+			config_path = Cross::GetPlatformConfigDir();
 			struct stat info;
 			if (!stat(config_path.c_str(), &info) || !(info.st_mode & S_IFDIR)) {
 #ifdef WIN32
@@ -1370,7 +1370,7 @@ void CONFIG::Run(void) {
 		case P_LISTCONF: {
 			Bitu size = (Bitu)control->configfiles.size();
 			std::string config_path;
-			Cross::GetPlatformConfigDir(config_path);
+			config_path = Cross::GetPlatformConfigDir();
 			WriteOut(MSG_Get("PROGRAM_CONFIG_CONFDIR"), VERSION,config_path.c_str());
 			char cwd[512] = {0};
 			char *res = getcwd(cwd,sizeof(cwd)-1);
@@ -1413,7 +1413,7 @@ void CONFIG::Run(void) {
 			if (securemode_check()) return;
 			if (pvars.size() > 0) return;
 			std::string confname;
-			Cross::GetPlatformConfigName(confname);
+			confname = Cross::GetPlatformConfigName();
 			writeconf(confname, true, all, norem);
 			if (presult==P_WRITECONF_DEFAULT_REBOOT) RebootConfig(confname);
 			break;
@@ -1789,7 +1789,7 @@ void CONFIG::Run(void) {
                         } else if (!strcasecmp(pvars[0].c_str(), "userconfigdir")) {
                             if (securemode_check()) return;
                             std::string config_path;
-                            Cross::GetPlatformConfigDir(config_path);
+                            config_path = Cross::GetPlatformConfigDir();
                             WriteOut("%s\n",config_path.c_str());
                             first_shell->SetEnv("CONFIG",config_path.c_str());
                         } else if (!strcasecmp(pvars[0].c_str(), "configdir")) {
