@@ -49,7 +49,7 @@ Control remote debugging verbosity via the `[log]` section:
 
 ```ini
 [log]
-remote=debug    # debug, normal, warn, error, fatal, never
+remote=debug    # debug, normal (default), warn, error, fatal, never
 ```
 
 ---

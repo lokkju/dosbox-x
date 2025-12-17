@@ -1014,7 +1014,9 @@ void LOG::SetupConfigSection(void) {
 		safe_strncpy(buf,loggrp[i].front, sizeof(buf));
 		lowcase(buf);
 
-		Pstring = sect->Add_string(buf,Property::Changeable::Always,"false");
+		// Default remote debugging to "normal" so users see server start/stop messages
+		const char* default_val = (i == LOG_REMOTE) ? "normal" : "false";
+		Pstring = sect->Add_string(buf,Property::Changeable::Always,default_val);
 		Pstring->Set_values(log_values);
 		Pstring->Set_help("Enable/Disable logging of this type.");
     }
