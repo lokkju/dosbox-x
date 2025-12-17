@@ -148,3 +148,12 @@ See [QEMU QKeyCode](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) 
 - `src/debug/gdbserver.cpp`, `include/gdbserver.h` - GDB server
 - `src/debug/qmp.cpp`, `include/qmp.h` - QMP server
 - `src/debug/debug.cpp` - Integration
+
+---
+
+## TODO
+
+- [ ] Windows support (currently POSIX sockets only)
+- [ ] Hardware breakpoints/watchpoints for GDB server
+- [ ] Mouse input support for QMP server
+- [ ] Integration tests
