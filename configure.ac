@@ -1000,28 +1000,28 @@ AC_ARG_ENABLE(debug,AC_HELP_STRING([--enable-debug],[Enable debug mode]),[
    fi
 ],)
 
-dnl FEATURE: GDB Server (remote debugging)
-AH_TEMPLATE(C_GDBSERVER,[Define to 1 to enable GDB remote debugging server, requires POSIX sockets])
-AC_ARG_ENABLE(gdbserver,AC_HELP_STRING([--enable-gdbserver],[Enable GDB remote debugging server (Linux/BSD only)]),[
-   if test x$enable_gdbserver = xyes; then
+dnl FEATURE: Remote debugging (GDB server + QMP keyboard input)
+AH_TEMPLATE(C_REMOTEDEBUG,[Define to 1 to enable remote debugging (GDB server, QMP), requires POSIX sockets])
+AC_ARG_ENABLE(remotedebug,AC_HELP_STRING([--enable-remotedebug],[Enable remote debugging servers (Linux/BSD only)]),[
+   if test x$enable_remotedebug = xyes; then
      case "$host" in
        *-*-linux* | *-*-freebsd* | *-*-dragonfly* | *-*-netbsd* | *-*-openbsd* | *-*-darwin*)
          AC_CHECK_HEADERS([sys/socket.h netinet/in.h arpa/inet.h], [
-           AC_DEFINE(C_GDBSERVER,1)
-           AC_MSG_RESULT([GDB server enabled])
+           AC_DEFINE(C_REMOTEDEBUG,1)
+           AC_MSG_RESULT([Remote debugging enabled])
          ], [
-           AC_MSG_ERROR([GDB server requires POSIX socket headers])
+           AC_MSG_ERROR([Remote debugging requires POSIX socket headers])
          ])
          ;;
        *)
-         AC_MSG_ERROR([GDB server is only supported on Linux, BSD, and macOS])
+         AC_MSG_ERROR([Remote debugging is only supported on Linux, BSD, and macOS])
          ;;
      esac
    else
-     AC_MSG_RESULT([GDB server not enabled])
+     AC_MSG_RESULT([Remote debugging not enabled])
    fi
 ],)
-AM_CONDITIONAL(C_GDBSERVER, test "x$enable_gdbserver" = "xyes")
+AM_CONDITIONAL(C_REMOTEDEBUG, test "x$enable_remotedebug" = "xyes")
 
 dnl automake 1.14 and upwards rewrite the host to have always 64 bit unless i386 as host is passed
 dnl this can make building a 32 bit executable a bit tricky, as dosbox relies on the host to select the

@@ -35,10 +35,13 @@ void DEBUG_Step();
 void DEBUG_Continue();
 bool DEBUG_SetBreakpoint(uint32_t address);
 bool DEBUG_RemoveBreakpoint(uint32_t address);
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
 void DEBUG_StartGDBServer(int port);
 void DEBUG_StopGDBServer();
 bool DEBUG_IsGDBServerRunning();
+void DEBUG_StartQMPServer(int port);
+void DEBUG_StopQMPServer();
+bool DEBUG_IsQMPServerRunning();
 #endif
 
 extern Bitu cycle_count;

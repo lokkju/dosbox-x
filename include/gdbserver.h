@@ -3,7 +3,7 @@
 
 #include "dosbox.h"
 
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
 
 #include <string>
 #include <vector>
@@ -65,6 +65,6 @@ private:
     uint8_t hex_to_int(char c);
 };
 
-#endif /* C_GDBSERVER */
+#endif /* C_REMOTEDEBUG */
 
 #endif /* DOSBOX_GDBSERVER_H */

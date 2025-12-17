@@ -44,8 +44,9 @@ using namespace std;
 #include "mapper.h"
 #include "pc98_gdc.h"
 #include "callback.h"
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
 #include "gdbserver.h"
+#include "qmp.h"
 #endif
 #include "inout.h"
 #include "paging.h"
@@ -174,7 +175,7 @@ static void DrawVariables(void);
 static void LogDOSKernMem(void);
 static void LogBIOSMem(void);
 
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
 static GDBServer* gdbServer = nullptr;
 #endif
 
@@ -4915,7 +4916,7 @@ void DEBUG_Enable_Handler(bool pressed) {
 
     if (!debugging) {
         printf("Breakpoint hit! Entering debugger.\n");
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
         if (gdbServer != nullptr) {
             gdbServer->signal_breakpoint();
         }
@@ -5659,14 +5660,20 @@ void DEBUG_ReinitCallback(void) {
 void DEBUG_Init() {
     LOG(LOG_MISC, LOG_DEBUG)("Initializing debug system");
 
-#if C_GDBSERVER
-    /* Check config for GDB server */
+#if C_REMOTEDEBUG
+    /* Check config for GDB server and QMP server */
     Section_prop *section = static_cast<Section_prop*>(control->GetSection("dosbox"));
     if (section) {
         bool gdbserver_enabled = section->Get_bool("gdbserver");
         int gdbserver_port = section->Get_int("gdbserver port");
         if (gdbserver_enabled) {
             DEBUG_StartGDBServer(gdbserver_port);
+        }
+
+        bool qmp_enabled = section->Get_bool("qmpserver");
+        int qmp_port = section->Get_int("qmpserver port");
+        if (qmp_enabled) {
+            DEBUG_StartQMPServer(qmp_port);
         }
     }
 #endif
@@ -6120,7 +6127,7 @@ uint32_t DEBUG_GetRegister(int reg) {
 
  void DEBUG_Step() {
     DEBUG_CheckKeys(KEY_F(11));
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
     if (gdbServer != nullptr) {
         gdbServer->signal_breakpoint();
     }
@@ -6156,7 +6163,7 @@ uint32_t DEBUG_GetRegister(int reg) {
      return CBreakpoint::DeleteBreakpoint(seg, off);
  }
 
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
  // GDB server start/stop functions
  void DEBUG_StartGDBServer(int port) {
      if (gdbServer != nullptr && gdbServer->is_running()) {
@@ -6189,7 +6196,19 @@ uint32_t DEBUG_GetRegister(int reg) {
  bool DEBUG_IsGDBServerRunning() {
      return gdbServer != nullptr && gdbServer->is_running();
  }
-#endif /* C_GDBSERVER */
+
+ void DEBUG_StartQMPServer(int port) {
+     QMP_StartServer(port);
+ }
+
+ void DEBUG_StopQMPServer() {
+     QMP_StopServer();
+ }
+
+ bool DEBUG_IsQMPServerRunning() {
+     return QMP_IsServerRunning();
+ }
+#endif /* C_REMOTEDEBUG */
 
 
 #endif // DEBUG

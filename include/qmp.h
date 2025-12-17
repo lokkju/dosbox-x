@@ -1,0 +1,91 @@
+/*
+ *  Copyright (C) 2002-2021  The DOSBox Team
+ *
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License along
+ *  with this program; if not, write to the Free Software Foundation, Inc.,
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ */
+
+#ifndef DOSBOX_QMP_H
+#define DOSBOX_QMP_H
+
+#include "dosbox.h"
+
+#if C_REMOTEDEBUG
+
+#include <string>
+#include <vector>
+#include <map>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <fcntl.h>
+
+#include "keyboard.h"
+
+// QMP Server - QEMU Monitor Protocol compatible server for keyboard input
+// Implements a subset of QMP focused on send-key and input-send-event commands
+
+class QMPServer {
+public:
+    QMPServer(int port) : port(port), server_fd(-1), client_fd(-1), running(false) {}
+    ~QMPServer() { stop(); }
+
+    void run();
+    void stop();
+    bool is_running() const { return running; }
+
+private:
+    int port;
+    int server_fd, client_fd;
+    bool running;
+
+    // Socket operations
+    void setup_socket();
+    void wait_for_client();
+    void handle_client();
+
+    // Protocol handling
+    void send_greeting();
+    void send_response(const std::string& response);
+    void send_success();
+    void send_error(const std::string& error_class, const std::string& desc);
+    std::string receive_command();
+    void process_command(const std::string& cmd);
+
+    // Command handlers
+    void handle_qmp_capabilities();
+    void handle_send_key(const std::string& cmd);
+    void handle_input_send_event(const std::string& cmd);
+    void handle_query_commands();
+
+    // Key mapping
+    static KBD_KEYS qcode_to_kbd(const std::string& qcode);
+    static const std::map<std::string, KBD_KEYS>& get_keymap();
+
+    // JSON helpers (minimal implementation)
+    static std::string extract_string(const std::string& json, const std::string& key);
+    static int extract_int(const std::string& json, const std::string& key, int default_val);
+    static bool extract_bool(const std::string& json, const std::string& key, bool default_val);
+    static std::vector<std::string> extract_array(const std::string& json, const std::string& key);
+};
+
+// Public interface for debug.cpp
+void QMP_StartServer(int port);
+void QMP_StopServer();
+bool QMP_IsServerRunning();
+
+#endif /* C_REMOTEDEBUG */
+
+#endif /* DOSBOX_QMP_H */

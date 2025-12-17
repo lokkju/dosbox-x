@@ -1,6 +1,6 @@
 #include "dosbox.h"
 
-#if C_GDBSERVER
+#if C_REMOTEDEBUG
 
 #include <iostream>
 #include <mutex>
@@ -542,4 +542,4 @@
      return (x >> 8) | (x << 8);
  }
 
-#endif /* C_GDBSERVER */
+#endif /* C_REMOTEDEBUG */
