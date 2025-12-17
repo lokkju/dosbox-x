@@ -43,6 +43,15 @@ qmpserver port=4444
 
 Servers can be toggled at runtime via **Debug > GDB Server** and **Debug > QMP Server** menus.
 
+### Logging
+
+Control remote debugging verbosity via the `[log]` section:
+
+```ini
+[log]
+remote=debug    # debug, normal, warn, error, fatal, never
+```
+
 ---
 
 ## GDB Server
