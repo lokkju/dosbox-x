@@ -974,6 +974,7 @@ void LOG::EarlyInit(void) {
 	loggrp[LOG_PCI].front="PCI";
 	
 	loggrp[LOG_VOODOO].front="SST";
+	loggrp[LOG_REMOTE].front="REMOTE";
 
 	do_LOG_stderr = control->opt_earlydebug;
 

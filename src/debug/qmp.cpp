@@ -199,7 +199,7 @@ std::vector<std::string> QMPServer::extract_array(const std::string& json, const
 }
 
 void QMPServer::run() {
-    DEBUG_ShowMsg("QMP: Starting server...");
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Starting server...");
     running = true;
     setup_socket();
 
@@ -209,13 +209,13 @@ void QMPServer::run() {
             handle_client();
         }
     }
-    DEBUG_ShowMsg("QMP: Server stopped");
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Server stopped");
 }
 
 void QMPServer::stop() {
     if (!running) return;
     running = false;
-    DEBUG_ShowMsg("QMP: Stopping server...");
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Stopping server...");
     if (client_fd != -1) {
         close(client_fd);
         client_fd = -1;
@@ -231,12 +231,12 @@ void QMPServer::setup_socket() {
     int opt = 1;
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        DEBUG_ShowMsg("QMP: socket failed");
+        LOG(LOG_REMOTE, LOG_ERROR)("QMP: socket failed");
         return;
     }
 
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        DEBUG_ShowMsg("QMP: setsockopt failed");
+        LOG(LOG_REMOTE, LOG_ERROR)("QMP: setsockopt failed");
         return;
     }
 
@@ -245,16 +245,16 @@ void QMPServer::setup_socket() {
     address.sin_port = htons(port);
 
     if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        DEBUG_ShowMsg("QMP: bind failed on port %d", port);
+        LOG(LOG_REMOTE, LOG_ERROR)("QMP: bind failed on port %d", port);
         return;
     }
 
     if (listen(server_fd, 1) < 0) {
-        DEBUG_ShowMsg("QMP: listen failed");
+        LOG(LOG_REMOTE, LOG_ERROR)("QMP: listen failed");
         return;
     }
 
-    DEBUG_ShowMsg("QMP: Listening on port %d", port);
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Listening on port %d", port);
 }
 
 void QMPServer::wait_for_client() {
@@ -264,11 +264,11 @@ void QMPServer::wait_for_client() {
     client_fd = accept(server_fd, (struct sockaddr *)&address, &addrlen);
     if (client_fd < 0) {
         if (running) {
-            DEBUG_ShowMsg("QMP: accept failed");
+            LOG(LOG_REMOTE, LOG_ERROR)("QMP: accept failed");
         }
         return;
     }
-    DEBUG_ShowMsg("QMP: Client connected");
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Client connected");
 }
 
 void QMPServer::handle_client() {
@@ -286,7 +286,7 @@ void QMPServer::handle_client() {
         close(client_fd);
         client_fd = -1;
     }
-    DEBUG_ShowMsg("QMP: Client disconnected");
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Client disconnected");
 }
 
 void QMPServer::send_greeting() {
@@ -401,7 +401,7 @@ void QMPServer::handle_send_key(const std::string& cmd) {
             if (kbd != KBD_NONE) {
                 kbd_keys.push_back(kbd);
             } else {
-                DEBUG_ShowMsg("QMP: Unknown qcode: %s", data.c_str());
+                LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown qcode: %s", data.c_str());
             }
         }
     }
@@ -462,7 +462,7 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
             if (kbd != KBD_NONE) {
                 KEYBOARD_AddKey(kbd, down);
             } else {
-                DEBUG_ShowMsg("QMP: Unknown qcode: %s", key_data.c_str());
+                LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown qcode: %s", key_data.c_str());
             }
         }
     }
@@ -473,7 +473,7 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
 // Public interface
 void QMP_StartServer(int port) {
     if (qmpServer != nullptr) {
-        DEBUG_ShowMsg("QMP: Server already running");
+        LOG(LOG_REMOTE, LOG_WARN)("QMP: Server already running");
         return;
     }
 

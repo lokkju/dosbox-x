@@ -26,7 +26,7 @@
  }
 
  void GDBServer::run() {
-     DEBUG_ShowMsg("GDBServer: Starting...");
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Starting...");
      running = true;
      setup_socket();
 
@@ -36,13 +36,13 @@
              handle_client();
          }
      }
-     DEBUG_ShowMsg("GDBServer: Stopped");
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Stopped");
  }
 
  void GDBServer::stop() {
      if (!running) return;
      running = false;
-     DEBUG_ShowMsg("GDBServer: Stopping...");
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Stopping...");
      if (client_fd != -1) {
          close(client_fd);
          client_fd = -1;
@@ -58,12 +58,12 @@
      int opt = 1;
 
      if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-         DEBUG_ShowMsg("GDBServer: socket failed");
+         LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: socket failed");
          exit(EXIT_FAILURE);
      }
 
      if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-         DEBUG_ShowMsg("GDBServer: setsockopt");
+         LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: setsockopt failed");
          exit(EXIT_FAILURE);
      }
 
@@ -72,36 +72,36 @@
      address.sin_port = htons(port);
 
      if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-         DEBUG_ShowMsg("GDBServer: bind failed");
+         LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: bind failed");
          exit(EXIT_FAILURE);
      }
 
      if (listen(server_fd, 1) < 0) {
-         DEBUG_ShowMsg("GDBServer: listen failure");
+         LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: listen failed");
          exit(EXIT_FAILURE);
      }
 
-     DEBUG_ShowMsg("GDBServer: Listening on port %d", port);
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Listening on port %d", port);
  }
 
  void GDBServer::wait_for_client() {
      struct sockaddr_in address;
      int addrlen = sizeof(address);
 
-     DEBUG_ShowMsg("GDBServer: Waiting for client connection...");
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Waiting for client connection...");
      if ((client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
-         DEBUG_ShowMsg("accept");
+         LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: accept failed");
          exit(EXIT_FAILURE);
      }
-     DEBUG_ShowMsg("GDBServer: Client connected");
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Client connected");
  }
 
  void GDBServer::handle_client() {
-     DEBUG_ShowMsg("GDBServer: Handling client");
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Handling client");
 
      // Perform initial handshake
      if (!perform_handshake()) {
-         DEBUG_ShowMsg("GDBServer: Handshake failed");
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Handshake failed");
          close(client_fd);
          return;
      }
@@ -119,16 +119,16 @@
 
      }
 
-     DEBUG_ShowMsg("GDBServer: closing client");
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Client disconnected");
      close(client_fd);
  }
 
  bool GDBServer::perform_handshake() {
      std::string handshake = receive_packet();
-     DEBUG_ShowMsg("GDBServer: Received handshake - %s", handshake.c_str());
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Received handshake - %s", handshake.c_str());
 
      if (handshake.substr(0, 10) != "qSupported") {
-         DEBUG_ShowMsg("GDBServer: Unexpected initial packet - %s", handshake.c_str());
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Unexpected initial packet - %s", handshake.c_str());
          return false;
      }
 
@@ -139,7 +139,7 @@
                             "vContSupported+;" // vCont packet for continuing and stepping
                             "QStartNoAckMode+"; // no ack mode
      send_packet(response);
-     DEBUG_ShowMsg("GDBServer: Sent supported features - %s", response.c_str());
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Sent supported features - %s", response.c_str());
 
 
      return true;
@@ -153,7 +153,7 @@
      // Wait for the start of the packet
      while (true) {
          if (read(client_fd, &c, 1) <= 0) {
-             DEBUG_ShowMsg("GDBServer: Error reading from client or client disconnected");
+             LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Client disconnected or read error");
              return "";
          }
          if (c == '$') break;
@@ -162,7 +162,7 @@
      // Read the packet content
      while (true) {
          if (read(client_fd, &c, 1) <= 0) {
-             DEBUG_ShowMsg("GDBServer: Error reading packet content");
+             LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Error reading packet content");
              return "";
          }
          if (c == '#') break;
@@ -172,7 +172,7 @@
      // Read the checksum
      char checksum[2];
      if (read(client_fd, checksum, 2) <= 0) {
-         DEBUG_ShowMsg("GDBServer: Error reading checksum");
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Error reading checksum");
          return "";
      }
 
@@ -184,7 +184,7 @@
      }
 
      if (received_checksum != calculated_checksum) {
-         DEBUG_ShowMsg("GDBServer: Checksum mismatch! received 0x%02x, calculated 0x%02x", received_checksum, calculated_checksum);
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Checksum mismatch! received 0x%02x, calculated 0x%02x", received_checksum, calculated_checksum);
          if (!noack_mode) {
              write(client_fd, "-", 1);
          }
@@ -196,13 +196,13 @@
          write(client_fd, "+", 1);
      }
 
-     DEBUG_ShowMsg("GDBServer: << %s", packet.c_str());
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: << %s", packet.c_str());
 
      return packet;
  }
 
  void GDBServer::send_packet(const std::string& packet) {
-     DEBUG_ShowMsg("GDBServer: >> %s", packet.c_str());
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: >> %s", packet.c_str());
      std::string response = "$" + packet + "#";
      uint8_t checksum = 0;
      for (char c : packet) {
@@ -267,7 +267,7 @@
      } else if (cmd.substr(0, 4) == "vCont") {
          handle_v_packets(cmd.substr(5));
      } else {
-         DEBUG_ShowMsg("GDBServer: Unhandled command %s", cmd.c_str());
+         LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Unhandled command %s", cmd.c_str());
          send_packet("");
      }
 
