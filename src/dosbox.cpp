@@ -1703,6 +1703,14 @@ void DOSBOX_SetupConfigSections(void) {
     Pbool = secprop->Add_bool("bochs debug port e9",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, emulate Bochs debug port E9h. ASCII text written to this I/O port is assumed to be debug output, and logged.");
 
+#if C_GDBSERVER
+    Pbool = secprop->Add_bool("gdbserver",Property::Changeable::WhenIdle,false);
+    Pbool->Set_help("If set, start a GDB remote debugging server. Allows external debuggers to connect.");
+
+    Pint = secprop->Add_int("gdbserver port",Property::Changeable::OnlyAtStart,2159);
+    Pint->Set_help("TCP port for the GDB server to listen on.");
+#endif
+
     Pstring = secprop->Add_string("machine",Property::Changeable::OnlyAtStart,"svga_s3");
     Pstring->Set_values(machines);
     Pstring->Set_help("The type of machine DOSBox-X tries to emulate.");

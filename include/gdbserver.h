@@ -1,4 +1,10 @@
+#ifndef DOSBOX_GDBSERVER_H
+#define DOSBOX_GDBSERVER_H
+
 #include "dosbox.h"
+
+#if C_GDBSERVER
+
 #include <string>
 #include <vector>
 #include <cstring>
@@ -9,27 +15,27 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include "debug.h"
-
 
 static inline uint32_t swap32(uint32_t x);
 static inline uint16_t swap16(uint16_t x);
 
 class GDBServer {
 public:
-    GDBServer(int port) : port(port), server_fd(-1), client_fd(-1) {}
+    GDBServer(int port) : port(port), server_fd(-1), client_fd(-1), running(false) {}
     ~GDBServer() {
-        if (client_fd != -1) close(client_fd);
-        if (server_fd != -1) close(server_fd);
+        stop();
     }
     void run();
+    void stop();
     void signal_breakpoint();
+    bool is_running() const { return running; }
 
 private:
     int port;
     int server_fd, client_fd;
     bool noack_mode = false;
     bool processing = false;
+    bool running = false;
 
     void setup_socket();
     void wait_for_client();
@@ -58,3 +64,7 @@ private:
     std::string hex_decode(const std::string& input);
     uint8_t hex_to_int(char c);
 };
+
+#endif /* C_GDBSERVER */
+
+#endif /* DOSBOX_GDBSERVER_H */

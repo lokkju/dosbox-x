@@ -35,7 +35,11 @@ void DEBUG_Step();
 void DEBUG_Continue();
 bool DEBUG_SetBreakpoint(uint32_t address);
 bool DEBUG_RemoveBreakpoint(uint32_t address);
-void DEBUG_InitGDBStub(int port);
+#if C_GDBSERVER
+void DEBUG_StartGDBServer(int port);
+void DEBUG_StopGDBServer();
+bool DEBUG_IsGDBServerRunning();
+#endif
 
 extern Bitu cycle_count;
 extern Bitu debugCallback;

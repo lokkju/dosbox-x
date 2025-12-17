@@ -44,7 +44,9 @@ using namespace std;
 #include "mapper.h"
 #include "pc98_gdc.h"
 #include "callback.h"
+#if C_GDBSERVER
 #include "gdbserver.h"
+#endif
 #include "inout.h"
 #include "paging.h"
 #include "shell.h"
@@ -172,7 +174,9 @@ static void DrawVariables(void);
 static void LogDOSKernMem(void);
 static void LogBIOSMem(void);
 
-static GDBServer* gdbServer;
+#if C_GDBSERVER
+static GDBServer* gdbServer = nullptr;
+#endif
 
 extern int debuggerrun;
 int debugrunmode=0;
@@ -4911,7 +4915,11 @@ void DEBUG_Enable_Handler(bool pressed) {
 
     if (!debugging) {
         printf("Breakpoint hit! Entering debugger.\n");
-        gdbServer->signal_breakpoint();
+#if C_GDBSERVER
+        if (gdbServer != nullptr) {
+            gdbServer->signal_breakpoint();
+        }
+#endif
     }
 
     debugging=true;
@@ -5650,7 +5658,18 @@ void DEBUG_ReinitCallback(void) {
 
 void DEBUG_Init() {
     LOG(LOG_MISC, LOG_DEBUG)("Initializing debug system");
-    DEBUG_InitGDBStub(2159);
+
+#if C_GDBSERVER
+    /* Check config for GDB server */
+    Section_prop *section = static_cast<Section_prop*>(control->GetSection("dosbox"));
+    if (section) {
+        bool gdbserver_enabled = section->Get_bool("gdbserver");
+        int gdbserver_port = section->Get_int("gdbserver port");
+        if (gdbserver_enabled) {
+            DEBUG_StartGDBServer(gdbserver_port);
+        }
+    }
+#endif
 
     /* Reset code overview and input line */
 	memset((void*)&codeViewData,0,sizeof(codeViewData));
@@ -6101,7 +6120,11 @@ uint32_t DEBUG_GetRegister(int reg) {
 
  void DEBUG_Step() {
     DEBUG_CheckKeys(KEY_F(11));
-    gdbServer->signal_breakpoint();
+#if C_GDBSERVER
+    if (gdbServer != nullptr) {
+        gdbServer->signal_breakpoint();
+    }
+#endif
     return;
  }
 
@@ -6133,18 +6156,40 @@ uint32_t DEBUG_GetRegister(int reg) {
      return CBreakpoint::DeleteBreakpoint(seg, off);
  }
 
- // Add this function to handle GDB server initialization
- void DEBUG_InitGDBStub(int port) {
-     // This function should be called from dosbox.cpp when the -gdb option is used
+#if C_GDBSERVER
+ // GDB server start/stop functions
+ void DEBUG_StartGDBServer(int port) {
+     if (gdbServer != nullptr && gdbServer->is_running()) {
+         DEBUG_ShowMsg("GDBServer: Already running");
+         return;
+     }
+
+     if (gdbServer != nullptr) {
+         delete gdbServer;
+     }
+
      gdbServer = new GDBServer(port);
 
      // Run the GDB server in a separate thread
-     std::thread gdbThread([gdbServer]() {
+     std::thread gdbThread([port]() {
          gdbServer->run();
      });
 
      gdbThread.detach();  // Let the thread run independently
  }
+
+ void DEBUG_StopGDBServer() {
+     if (gdbServer != nullptr) {
+         gdbServer->stop();
+         delete gdbServer;
+         gdbServer = nullptr;
+     }
+ }
+
+ bool DEBUG_IsGDBServerRunning() {
+     return gdbServer != nullptr && gdbServer->is_running();
+ }
+#endif /* C_GDBSERVER */
 
 
 #endif // DEBUG

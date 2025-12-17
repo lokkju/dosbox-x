@@ -33,6 +33,9 @@
 #include "inout.h"
 #include "regs.h"
 #include "cpu.h"
+#if C_DEBUG
+#include "debug.h"
+#endif
 #include "../dos/drives.h"
 #include "../ints/int10.h"
 #include "../libs/tinyfiledialogs/tinyfiledialogs.h"
@@ -890,6 +893,28 @@ bool dos_debug_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const me
 
     return true;
 }
+
+#if C_GDBSERVER
+bool gdbserver_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const menuitem) {
+    (void)menu;//UNUSED
+    (void)menuitem;//UNUSED
+
+    Section_prop *section = static_cast<Section_prop*>(control->GetSection("dosbox"));
+    bool enabled = DEBUG_IsGDBServerRunning();
+
+    if (enabled) {
+        DEBUG_StopGDBServer();
+        SetVal("dosbox", "gdbserver", "false");
+    } else {
+        int port = section ? section->Get_int("gdbserver port") : 2159;
+        DEBUG_StartGDBServer(port);
+        SetVal("dosbox", "gdbserver", "true");
+    }
+
+    mainMenu.get_item("debug_gdbserver").check(!enabled).refresh_item(mainMenu);
+    return true;
+}
+#endif
 
 void OutputSettingMenuUpdate(void);
 void MENU_swapstereo(bool enabled);
@@ -3721,6 +3746,10 @@ void AllocCallback1() {
                         set_callback_function(dos_debug_menu_callback);
                     mainMenu.alloc_item(DOSBoxMenu::item_type_id,"debug_logfileio").set_text("Log file I/O").
                         set_callback_function(dos_debug_menu_callback);
+#if C_GDBSERVER
+                    mainMenu.alloc_item(DOSBoxMenu::item_type_id,"debug_gdbserver").set_text("GDB Server").
+                        set_callback_function(gdbserver_menu_callback);
+#endif
                 }
             }
         }

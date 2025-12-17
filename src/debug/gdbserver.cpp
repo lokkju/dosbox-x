@@ -1,9 +1,14 @@
+#include "dosbox.h"
+
+#if C_GDBSERVER
+
 #include <iostream>
- #include <mutex>
- #include <queue>
- #include "gdbserver.h"
- #include "keyboard.h"
- #include "logging.h"
+#include <mutex>
+#include <queue>
+#include "gdbserver.h"
+#include "debug.h"
+#include "keyboard.h"
+#include "logging.h"
 
  static std::queue<std::string> async_events;
  static std::mutex async_mutex;
@@ -23,11 +28,29 @@
 
  void GDBServer::run() {
      DEBUG_ShowMsg("GDBServer: Starting...");
+     running = true;
      setup_socket();
 
-     while (true) {
+     while (running) {
          wait_for_client();
-         handle_client();
+         if (running) {
+             handle_client();
+         }
+     }
+     DEBUG_ShowMsg("GDBServer: Stopped");
+ }
+
+ void GDBServer::stop() {
+     if (!running) return;
+     running = false;
+     DEBUG_ShowMsg("GDBServer: Stopping...");
+     if (client_fd != -1) {
+         close(client_fd);
+         client_fd = -1;
+     }
+     if (server_fd != -1) {
+         close(server_fd);
+         server_fd = -1;
      }
  }
 
@@ -518,3 +541,5 @@
  static inline uint16_t swap16(uint16_t x) {
      return (x >> 8) | (x << 8);
  }
+
+#endif /* C_GDBSERVER */
