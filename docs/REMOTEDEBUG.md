@@ -148,6 +148,45 @@ See [QEMU QKeyCode](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) 
 - `src/debug/gdbserver.cpp`, `include/gdbserver.h` - GDB server
 - `src/debug/qmp.cpp`, `include/qmp.h` - QMP server
 - `src/debug/debug.cpp` - Integration
+- `tests/integration/` - Integration tests
+
+---
+
+## Integration Tests
+
+Integration tests use Python with the [dbxdebug](https://pypi.org/project/dbxdebug/) client library. Tests are self-contained scripts using [PEP 723](https://peps.python.org/pep-0723/) inline metadata for dependency management.
+
+### Requirements
+
+- Python 3.11+
+- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run tests/integration/run_all.py
+
+# Run individual test suites
+uv run tests/integration/test_gdb_server.py
+uv run tests/integration/test_qmp_server.py
+uv run tests/integration/test_video_tools.py
+
+# With pytest options
+uv run tests/integration/run_all.py -v           # Verbose
+uv run tests/integration/run_all.py -k memory    # Filter by name
+uv run tests/integration/run_all.py -x           # Stop on first failure
+```
+
+### Test Coverage
+
+| Suite | Coverage |
+|-------|----------|
+| `test_gdb_server.py` | Connection, registers, memory, breakpoints, execution control |
+| `test_qmp_server.py` | Connection, send-key, input-send-event, type_text, key codes |
+| `test_video_tools.py` | Screen capture, raw video memory, timer, VGA attributes |
+
+See `tests/integration/README.md` for detailed documentation.
 
 ---
 
@@ -156,4 +195,3 @@ See [QEMU QKeyCode](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) 
 - [ ] Windows support (currently POSIX sockets only)
 - [ ] Hardware breakpoints/watchpoints for GDB server
 - [ ] Mouse input support for QMP server
-- [ ] Integration tests
