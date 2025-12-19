@@ -325,17 +325,12 @@
 
  void GDBServer::handle_read_register(const std::string& cmd) {
      int reg_num = std::stoi(cmd.substr(1), nullptr, 16);
-     uint16_t value = DEBUG_GetRegister(reg_num);
+     uint32_t value = DEBUG_GetRegister(reg_num);
 
      std::stringstream ss;
-     ss << std::hex << std::setfill('0') << std::setw(4) << value;
-     std::string response = ss.str();
+     ss << std::hex << std::setfill('0') << std::setw(8) << swap32(value);
 
-     // Reverse byte order if necessary (little-endian)
-     std::swap(response[0], response[2]);
-     std::swap(response[1], response[3]);
-
-     send_packet(response);
+     send_packet(ss.str());
  }
 
  void GDBServer::handle_read_registers() {
