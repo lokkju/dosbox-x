@@ -895,6 +895,11 @@ bool dos_debug_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const me
 }
 
 #if C_REMOTEDEBUG
+void UpdateRemoteDebugMenuCheckmarks() {
+    mainMenu.get_item("debug_gdbserver").check(DEBUG_IsGDBServerRunning()).refresh_item(mainMenu);
+    mainMenu.get_item("debug_qmpserver").check(DEBUG_IsQMPServerRunning()).refresh_item(mainMenu);
+}
+
 bool gdbserver_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const menuitem) {
     (void)menu;//UNUSED
     (void)menuitem;//UNUSED
@@ -911,7 +916,7 @@ bool gdbserver_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const me
         SetVal("dosbox", "gdbserver", "true");
     }
 
-    mainMenu.get_item("debug_gdbserver").check(!enabled).refresh_item(mainMenu);
+    UpdateRemoteDebugMenuCheckmarks();
     return true;
 }
 
@@ -931,7 +936,7 @@ bool qmpserver_menu_callback(DOSBoxMenu * const menu,DOSBoxMenu::item * const me
         SetVal("dosbox", "qmpserver", "true");
     }
 
-    mainMenu.get_item("debug_qmpserver").check(!enabled).refresh_item(mainMenu);
+    UpdateRemoteDebugMenuCheckmarks();
     return true;
 }
 #endif

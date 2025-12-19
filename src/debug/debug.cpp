@@ -5657,6 +5657,10 @@ void DEBUG_ReinitCallback(void) {
 	CALLBACK_Setup(debugCallback,DEBUG_EnableDebugger,CB_RETF,"debugger");
 }
 
+#if C_REMOTEDEBUG
+extern void UpdateRemoteDebugMenuCheckmarks();
+#endif
+
 void DEBUG_Init() {
     LOG(LOG_MISC, LOG_DEBUG)("Initializing debug system");
 
@@ -5676,6 +5680,8 @@ void DEBUG_Init() {
             DEBUG_StartQMPServer(qmp_port);
         }
     }
+    /* Update menu checkmarks to reflect server state */
+    UpdateRemoteDebugMenuCheckmarks();
 #endif
 
     /* Reset code overview and input line */
