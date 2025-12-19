@@ -26,6 +26,8 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <atomic>
+#include <thread>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -42,14 +44,16 @@ public:
     QMPServer(int port) : port(port), server_fd(-1), client_fd(-1), running(false) {}
     ~QMPServer() { stop(); }
 
-    void run();
-    void stop();
-    bool is_running() const { return running; }
+    void start();  // Start server in a new thread
+    void run();    // Main server loop (called by thread)
+    void stop();   // Stop server and wait for thread to exit
+    bool is_running() const { return running.load(); }
 
 private:
     int port;
     int server_fd, client_fd;
-    bool running;
+    std::atomic<bool> running{false};
+    std::thread server_thread;
 
     // Socket operations
     void setup_socket();

@@ -30,12 +30,13 @@
          LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Already running");
          return;
      }
+     // Set running before spawning thread so is_running() returns true immediately
+     running.store(true);
      server_thread = std::thread(&GDBServer::run, this);
  }
 
  void GDBServer::run() {
      LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Starting...");
-     running.store(true);
      setup_socket();
 
      while (running.load()) {
@@ -186,6 +187,15 @@
              return "";
          }
          if (c == '$') break;
+         // Handle interrupt (Ctrl-C) - client wants to halt execution
+         if (c == 0x03) {
+             LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Received interrupt (Ctrl-C)");
+             DEBUG_EnableDebugger();
+             // Send stop reply immediately
+             send_packet("S05");  // SIGTRAP
+             // Continue waiting for next packet
+             continue;
+         }
      }
 
      // Read the packet content

@@ -29,7 +29,6 @@
 #include "logging.h"
 
 static QMPServer* qmpServer = nullptr;
-static std::thread* qmpThread = nullptr;
 
 // Key mapping from QEMU QKeyCode names to DOSBox KBD_KEYS
 const std::map<std::string, KBD_KEYS>& QMPServer::get_keymap() {
@@ -198,9 +197,18 @@ std::vector<std::string> QMPServer::extract_array(const std::string& json, const
     return result;
 }
 
+void QMPServer::start() {
+    if (running.load()) {
+        LOG(LOG_REMOTE, LOG_WARN)("QMP: Server already running");
+        return;
+    }
+    // Set running before spawning thread so is_running() returns true immediately
+    running.store(true);
+    server_thread = std::thread(&QMPServer::run, this);
+}
+
 void QMPServer::run() {
     LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Starting server...");
-    running.store(true);
     setup_socket();
 
     while (running.load()) {
@@ -226,6 +234,10 @@ void QMPServer::stop() {
         shutdown(server_fd, SHUT_RDWR);
         close(server_fd);
         server_fd = -1;
+    }
+    // Wait for server thread to finish
+    if (server_thread.joinable()) {
+        server_thread.join();
     }
 }
 
@@ -481,18 +493,13 @@ void QMP_StartServer(int port) {
     }
 
     qmpServer = new QMPServer(port);
-    qmpThread = new std::thread(&QMPServer::run, qmpServer);
+    qmpServer->start();
 }
 
 void QMP_StopServer() {
     if (qmpServer == nullptr) return;
 
     qmpServer->stop();
-    if (qmpThread != nullptr && qmpThread->joinable()) {
-        qmpThread->join();
-        delete qmpThread;
-        qmpThread = nullptr;
-    }
     delete qmpServer;
     qmpServer = nullptr;
 }
