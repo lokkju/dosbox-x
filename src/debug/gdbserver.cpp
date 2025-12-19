@@ -190,8 +190,8 @@
          // Handle interrupt (Ctrl-C) - client wants to halt execution
          if (c == 0x03) {
              LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Received interrupt (Ctrl-C)");
-             DEBUG_EnableDebugger();
-             // Send stop reply immediately
+             // Just send stop reply - don't open debugger UI
+             // The target is already halted since we're in GDB command mode
              send_packet("S05");  // SIGTRAP
              // Continue waiting for next packet
              continue;

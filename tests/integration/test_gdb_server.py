@@ -38,9 +38,17 @@ def gdb_connection(host: str = "localhost", port: int = 2159):
         finally:
             # Send detach to close debugger UI before disconnecting
             try:
-                client.detach()
-            except Exception:
-                pass
+                if hasattr(client, 'detach'):
+                    client.detach()
+                elif hasattr(client, 'send_packet'):
+                    # Send raw detach packet
+                    client.send_packet('D')
+                elif hasattr(client, '_socket'):
+                    # Last resort: send raw GDB packet directly
+                    packet = b'$D#44'  # D with checksum
+                    client._socket.send(packet)
+            except Exception as e:
+                print(f"Warning: detach failed: {e}")
 
 # Test configuration
 GDB_HOST = "localhost"
@@ -70,13 +78,8 @@ def gdb(gdb_available):
 
     Sends detach command on cleanup to close the debugger UI.
     """
-    with GDBClient(host=GDB_HOST, port=GDB_PORT) as client:
+    with gdb_connection(GDB_HOST, GDB_PORT) as client:
         yield client
-        # Send detach to close debugger UI before disconnecting
-        try:
-            client.detach()
-        except Exception:
-            pass  # Ignore errors during cleanup
 
 
 # =============================================================================
