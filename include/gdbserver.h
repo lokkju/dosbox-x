@@ -41,6 +41,7 @@ public:
     void stop();   // Stop server and wait for thread to exit
     void signal_breakpoint();
     bool is_running() const { return running.load(); }
+    bool has_client() const { return client_fd >= 0; }
 
     // Thread synchronization for step/continue
     // Called by main loop to check if step/continue is pending

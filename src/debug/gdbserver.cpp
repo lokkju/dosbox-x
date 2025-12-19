@@ -125,6 +125,7 @@
 
      // Reset state for new client
      noack_mode = false;
+     paused_for_gdb.store(false);  // Clear pause state from previous session
 
      // Perform initial handshake
      if (!perform_handshake()) {
@@ -151,6 +152,12 @@
      close(client_fd);
      client_fd = -1;
      noack_mode = false;  // Reset for next client
+     paused_for_gdb.store(false);  // Clear pause so CPU resumes
+     // If a command was pending, complete it to unblock any waiting thread
+     if (pending_command.load() != GDBCommand::NONE) {
+         pending_command.store(GDBCommand::NONE);
+         command_cv.notify_one();
+     }
  }
 
  bool GDBServer::perform_handshake() {

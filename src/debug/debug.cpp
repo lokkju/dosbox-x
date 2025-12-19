@@ -6166,8 +6166,8 @@ uint32_t DEBUG_GetRegister(int reg) {
         return false;
     }
 
-    // If paused waiting for GDB command, don't execute anything
-    if (gdbServer->is_paused()) {
+    // If paused waiting for GDB command and client is connected, don't execute anything
+    if (gdbServer->is_paused() && gdbServer->has_client()) {
         return true;  // Prevent CPU execution
     }
 
