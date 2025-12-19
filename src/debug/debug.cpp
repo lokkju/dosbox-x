@@ -6132,25 +6132,38 @@ uint32_t DEBUG_GetRegister(int reg) {
  }
 
  void DEBUG_Step() {
-    DEBUG_CheckKeys(KEY_F(11));
 #if C_REMOTEDEBUG
-    if (gdbServer != nullptr) {
+    // If GDB server is running, directly execute one instruction
+    // instead of simulating F11 keypress which requires DEBUG_Loop
+    if (gdbServer != nullptr && gdbServer->is_running()) {
+        skipFirstInstruction = true;
+        mustCompleteInstruction = true;
+        DEBUG_Run(1, true);
+        mustCompleteInstruction = false;
         gdbServer->signal_breakpoint();
+        return;
     }
 #endif
-    return;
+    // Normal debugger path - simulate F11 keypress
+    DEBUG_CheckKeys(KEY_F(11));
  }
 
  void DEBUG_Continue() {
-     DEBUG_CheckKeys(KEY_F(5));
-     return;
-
-
-     exitLoop = false;
-     debugging = false;
-     CBreakpoint::ActivateBreakpoints();
-     DOSBOX_SetNormalLoop();
-     return;
+#if C_REMOTEDEBUG
+    // If GDB server is running, directly resume execution
+    // instead of simulating F5 keypress which requires DEBUG_Loop
+    if (gdbServer != nullptr && gdbServer->is_running()) {
+        exitLoop = false;
+        debugging = false;
+        CBreakpoint::ActivateBreakpoints();
+        DOSBOX_SetNormalLoop();
+        // Note: We return immediately. When a breakpoint is hit,
+        // the breakpoint handler will call gdbServer->signal_breakpoint()
+        return;
+    }
+#endif
+    // Normal debugger path - simulate F5 keypress
+    DEBUG_CheckKeys(KEY_F(5));
  }
 
  #define FP_SEG(x) (uint16_t)((uint32_t)(x) >> 16)
