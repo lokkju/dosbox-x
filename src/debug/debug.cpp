@@ -6176,18 +6176,12 @@ uint32_t DEBUG_GetRegister(int reg) {
      }
 
      gdbServer = new GDBServer(port);
-
-     // Run the GDB server in a separate thread
-     std::thread gdbThread([port]() {
-         gdbServer->run();
-     });
-
-     gdbThread.detach();  // Let the thread run independently
+     gdbServer->start();
  }
 
  void DEBUG_StopGDBServer() {
      if (gdbServer != nullptr) {
-         gdbServer->stop();
+         gdbServer->stop();  // This now waits for thread to finish
          delete gdbServer;
          gdbServer = nullptr;
      }

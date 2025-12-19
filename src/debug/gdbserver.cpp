@@ -25,14 +25,22 @@
      return event;
  }
 
+ void GDBServer::start() {
+     if (running.load()) {
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Already running");
+         return;
+     }
+     server_thread = std::thread(&GDBServer::run, this);
+ }
+
  void GDBServer::run() {
      LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Starting...");
-     running = true;
+     running.store(true);
      setup_socket();
 
-     while (running) {
+     while (running.load()) {
          wait_for_client();
-         if (running) {
+         if (running.load()) {
              handle_client();
          }
      }
@@ -40,16 +48,26 @@
  }
 
  void GDBServer::stop() {
-     if (!running) return;
-     running = false;
+     if (!running.load()) return;
+
      LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Stopping...");
+     running.store(false);
+
+     // Close sockets to unblock any pending accept()/read() calls
      if (client_fd != -1) {
+         shutdown(client_fd, SHUT_RDWR);
          close(client_fd);
          client_fd = -1;
      }
      if (server_fd != -1) {
+         shutdown(server_fd, SHUT_RDWR);
          close(server_fd);
          server_fd = -1;
+     }
+
+     // Wait for the server thread to finish
+     if (server_thread.joinable()) {
+         server_thread.join();
      }
  }
 

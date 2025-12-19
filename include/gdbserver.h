@@ -10,6 +10,8 @@
 #include <cstring>
 #include <sstream>
 #include <iomanip>
+#include <atomic>
+#include <thread>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -25,17 +27,19 @@ public:
     ~GDBServer() {
         stop();
     }
-    void run();
-    void stop();
+    void start();  // Start server in a new thread
+    void run();    // Main server loop (called by thread)
+    void stop();   // Stop server and wait for thread to exit
     void signal_breakpoint();
-    bool is_running() const { return running; }
+    bool is_running() const { return running.load(); }
 
 private:
     int port;
     int server_fd, client_fd;
     bool noack_mode = false;
     bool processing = false;
-    bool running = false;
+    std::atomic<bool> running{false};
+    std::thread server_thread;
 
     void setup_socket();
     void wait_for_client();
