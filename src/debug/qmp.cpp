@@ -200,12 +200,12 @@ std::vector<std::string> QMPServer::extract_array(const std::string& json, const
 
 void QMPServer::run() {
     LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Starting server...");
-    running = true;
+    running.store(true);
     setup_socket();
 
-    while (running) {
+    while (running.load()) {
         wait_for_client();
-        if (running && client_fd != -1) {
+        if (running.load() && client_fd != -1) {
             handle_client();
         }
     }
@@ -213,14 +213,17 @@ void QMPServer::run() {
 }
 
 void QMPServer::stop() {
-    if (!running) return;
-    running = false;
+    if (!running.load()) return;
+    running.store(false);
     LOG(LOG_REMOTE, LOG_NORMAL)("QMP: Stopping server...");
+    // Use shutdown to unblock any blocking recv/accept calls
     if (client_fd != -1) {
+        shutdown(client_fd, SHUT_RDWR);
         close(client_fd);
         client_fd = -1;
     }
     if (server_fd != -1) {
+        shutdown(server_fd, SHUT_RDWR);
         close(server_fd);
         server_fd = -1;
     }
@@ -263,7 +266,7 @@ void QMPServer::wait_for_client() {
 
     client_fd = accept(server_fd, (struct sockaddr *)&address, &addrlen);
     if (client_fd < 0) {
-        if (running) {
+        if (running.load()) {
             LOG(LOG_REMOTE, LOG_ERROR)("QMP: accept failed");
         }
         return;
@@ -274,7 +277,7 @@ void QMPServer::wait_for_client() {
 void QMPServer::handle_client() {
     send_greeting();
 
-    while (running && client_fd != -1) {
+    while (running.load() && client_fd != -1) {
         std::string cmd = receive_command();
         if (cmd.empty()) {
             break;
@@ -315,7 +318,7 @@ std::string QMPServer::receive_command() {
     char buffer[4096];
     std::string cmd;
 
-    while (running) {
+    while (running.load()) {
         ssize_t bytes = recv(client_fd, buffer, sizeof(buffer) - 1, 0);
         if (bytes <= 0) {
             return "";
