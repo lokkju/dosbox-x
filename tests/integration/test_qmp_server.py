@@ -165,7 +165,7 @@ class TestInputSendEvent:
 
     def test_key_press(self, qmp):
         """Key press with configurable hold time."""
-        qmp.key_press("c", hold_time=100)
+        qmp.key_press("c", hold_time=0.1)  # 100ms
 
     def test_held_modifier(self, qmp):
         """Hold modifier while pressing other keys."""
@@ -173,7 +173,7 @@ class TestInputSendEvent:
         qmp.key_down("shift")
         time.sleep(0.02)
         for letter in ["h", "e", "l", "l", "o"]:
-            qmp.key_press(letter, hold_time=50)
+            qmp.key_press(letter, hold_time=0.05)  # 50ms
             time.sleep(0.02)
         qmp.key_up("shift")
 
@@ -250,7 +250,7 @@ class TestTiming:
         """Verify hold-time parameter is accepted."""
         # We can't easily verify the actual timing, but we can
         # verify the parameter is accepted
-        qmp.key_press("x", hold_time=200)
+        qmp.key_press("x", hold_time=0.2)  # 200ms
 
 
 # =============================================================================
