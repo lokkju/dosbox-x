@@ -139,6 +139,8 @@
 
      LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Client disconnected");
      close(client_fd);
+     client_fd = -1;
+     noack_mode = false;  // Reset for next client
  }
 
  bool GDBServer::perform_handshake() {
