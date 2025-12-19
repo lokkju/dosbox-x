@@ -280,8 +280,9 @@
      } else  if (cmd == "vMustReplyEmpty") {
          send_packet("");
      } else if (cmd == "?") {
-         DEBUG_EnableDebugger();
-         //send_packet("S05");  // Indicate a SIGTRAP
+         // Query halt reason - respond with SIGTRAP
+         // Don't open debugger UI - just report that target is stopped
+         send_packet("S05");
      } else if (cmd.substr(0, 1) == "H") {
          send_packet("OK");
          //handle_thread_select(cmd);
