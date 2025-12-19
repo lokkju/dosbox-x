@@ -6208,6 +6208,13 @@ uint32_t DEBUG_GetRegister(int reg) {
  bool DEBUG_IsQMPServerRunning() {
      return QMP_IsServerRunning();
  }
+
+ void DEBUG_CloseDebugger() {
+     // Signal the debug loop to exit and resume normal execution
+     exitLoop = true;
+     debugging = false;
+     LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Closing debugger UI");
+ }
 #endif /* C_REMOTEDEBUG */
 
 

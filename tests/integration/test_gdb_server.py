@@ -28,6 +28,20 @@ from contextlib import contextmanager
 import pytest
 from dbxdebug.gdb import GDBClient
 
+
+@contextmanager
+def gdb_connection(host: str = "localhost", port: int = 2159):
+    """Context manager that detaches before closing to clean up debugger UI."""
+    with GDBClient(host=host, port=port) as client:
+        try:
+            yield client
+        finally:
+            # Send detach to close debugger UI before disconnecting
+            try:
+                client.detach()
+            except Exception:
+                pass
+
 # Test configuration
 GDB_HOST = "localhost"
 GDB_PORT = 2159
@@ -52,9 +66,17 @@ def gdb_available():
 
 @pytest.fixture
 def gdb(gdb_available):
-    """Provide a fresh GDB client connection for each test."""
+    """Provide a fresh GDB client connection for each test.
+
+    Sends detach command on cleanup to close the debugger UI.
+    """
     with GDBClient(host=GDB_HOST, port=GDB_PORT) as client:
         yield client
+        # Send detach to close debugger UI before disconnecting
+        try:
+            client.detach()
+        except Exception:
+            pass  # Ignore errors during cleanup
 
 
 # =============================================================================
@@ -66,20 +88,20 @@ class TestConnection:
 
     def test_basic_connect(self, gdb_available):
         """Server accepts connection and responds."""
-        with GDBClient(host=GDB_HOST, port=GDB_PORT) as gdb:
+        with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
             # Connection successful if we get here
             assert gdb is not None
 
     def test_no_ack_mode(self, gdb_available):
         """QStartNoAckMode disables acknowledgments."""
-        with GDBClient(host=GDB_HOST, port=GDB_PORT) as gdb:
+        with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
             result = gdb.enable_no_ack_mode()
             assert result is True
 
     def test_reconnect_after_disconnect(self, gdb_available):
         """Server accepts new connection after client disconnects."""
         # First connection
-        with GDBClient(host=GDB_HOST, port=GDB_PORT) as gdb1:
+        with gdb_connection(GDB_HOST, GDB_PORT) as gdb1:
             regs1 = gdb1.read_registers()
             assert regs1 is not None
 
@@ -87,7 +109,7 @@ class TestConnection:
         time.sleep(0.1)
 
         # Second connection
-        with GDBClient(host=GDB_HOST, port=GDB_PORT) as gdb2:
+        with gdb_connection(GDB_HOST, GDB_PORT) as gdb2:
             regs2 = gdb2.read_registers()
             assert regs2 is not None
 

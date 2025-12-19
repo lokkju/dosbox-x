@@ -305,6 +305,11 @@
          handle_query(cmd.substr(1));
      } else if (cmd.substr(0, 4) == "vCont") {
          handle_v_packets(cmd.substr(5));
+     } else if (cmd == "D" || cmd.substr(0, 2) == "D;") {
+         // Detach - close debugger UI and resume execution
+         LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Client detaching");
+         DEBUG_CloseDebugger();
+         send_packet("OK");
      } else {
          LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Unhandled command %s", cmd.c_str());
          send_packet("");
