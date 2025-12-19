@@ -110,11 +110,11 @@ class TestSendKey:
 
     def test_modifier_combinations(self, qmp):
         """Test various modifier key combinations."""
+        # Note: Avoid Ctrl+Alt+Del and Alt+F4 as they can disrupt the emulator
         combos = [
             ["shift", "a"],       # Shift+A
-            ["ctrl", "alt", "delete"],  # Ctrl+Alt+Del
-            ["alt", "f4"],        # Alt+F4
-            ["ctrl", "shift", "esc"],   # Ctrl+Shift+Esc
+            ["ctrl", "c"],        # Ctrl+C (safe in DOS)
+            ["ctrl", "shift", "a"],   # Ctrl+Shift+A
         ]
         for combo in combos:
             qmp.send_key(combo)
