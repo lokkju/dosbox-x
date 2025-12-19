@@ -266,9 +266,42 @@
      } else {
          send_packet("S05");
      }
+ }
 
-     //while (processing) {}
-    // send_packet("S05");
+ void GDBServer::request_step() {
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: request_step() called, clearing pause and setting STEP");
+     std::unique_lock<std::mutex> lock(command_mutex);
+     paused_for_gdb.store(false);  // Clear pause to allow execution
+     pending_command.store(GDBCommand::STEP);
+     waiting_for_completion.store(true);
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Waiting for step completion...");
+     // Wait for the main loop to execute the step
+     command_cv.wait(lock, [this] {
+         return pending_command.load() == GDBCommand::NONE || !running.load();
+     });
+     waiting_for_completion.store(false);
+     LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Step completed, wait finished");
+ }
+
+ void GDBServer::request_continue() {
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Requesting continue");
+     std::unique_lock<std::mutex> lock(command_mutex);
+     paused_for_gdb.store(false);  // Clear pause to allow execution
+     pending_command.store(GDBCommand::CONTINUE);
+     waiting_for_completion.store(true);
+     // Wait for a breakpoint to be hit (signaled by complete_command)
+     command_cv.wait(lock, [this] {
+         return pending_command.load() == GDBCommand::NONE || !running.load();
+     });
+     waiting_for_completion.store(false);
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Continue completed (breakpoint hit)");
+ }
+
+ void GDBServer::complete_command() {
+     LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Completing command");
+     std::lock_guard<std::mutex> lock(command_mutex);
+     pending_command.store(GDBCommand::NONE);
+     command_cv.notify_one();
  }
 
  void GDBServer::process_command(const std::string& cmd) {
@@ -429,13 +462,15 @@
  }
 
  void GDBServer::handle_step() {
-     DEBUG_Step();
-     //send_packet("S05");  // Assuming SIGTRAP as the stop reason
+     // Request step from main thread and wait for completion
+     request_step();
+     send_packet("S05");  // SIGTRAP - step completed
  }
 
  void GDBServer::handle_continue() {
-     DEBUG_Continue();
-     //send_packet("S05");  // Assuming SIGTRAP as the stop reason
+     // Request continue from main thread and wait for breakpoint
+     request_continue();
+     send_packet("S05");  // SIGTRAP - breakpoint hit
  }
 
  void GDBServer::handle_breakpoint(const std::string& args) {

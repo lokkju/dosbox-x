@@ -43,6 +43,9 @@ void DEBUG_StartQMPServer(int port);
 void DEBUG_StopQMPServer();
 bool DEBUG_IsQMPServerRunning();
 void DEBUG_CloseDebugger();  // Close debugger UI and resume execution
+// Called by main loop to check and handle GDB step/continue requests
+// Returns true if a step was executed (caller should return from loop)
+bool DEBUG_CheckGDBStep();
 #endif
 
 extern Bitu cycle_count;

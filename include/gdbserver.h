@@ -12,6 +12,8 @@
 #include <iomanip>
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -20,6 +22,13 @@
 
 static inline uint32_t swap32(uint32_t x);
 static inline uint16_t swap16(uint16_t x);
+
+// GDB command types for thread synchronization
+enum class GDBCommand {
+    NONE,
+    STEP,
+    CONTINUE
+};
 
 class GDBServer {
 public:
@@ -33,13 +42,37 @@ public:
     void signal_breakpoint();
     bool is_running() const { return running.load(); }
 
+    // Thread synchronization for step/continue
+    // Called by main loop to check if step/continue is pending
+    GDBCommand get_pending_command() const { return pending_command.load(); }
+    // Called by main loop after executing command
+    void complete_command();
+    // Check if waiting for command completion
+    bool is_waiting() const { return waiting_for_completion.load(); }
+    // Check if CPU should be paused (waiting for next GDB command)
+    bool is_paused() const { return paused_for_gdb.load(); }
+    // Set paused state after step completes
+    void set_pause() { paused_for_gdb.store(true); }
+    // Clear paused state when a new command arrives
+    void clear_pause() { paused_for_gdb.store(false); }
+
 private:
+    // Request step/continue and wait for main loop to execute it
+    void request_step();
+    void request_continue();
     int port;
     int server_fd, client_fd;
     bool noack_mode = false;
     bool processing = false;
     std::atomic<bool> running{false};
     std::thread server_thread;
+
+    // Thread synchronization for step/continue
+    std::atomic<GDBCommand> pending_command{GDBCommand::NONE};
+    std::atomic<bool> waiting_for_completion{false};
+    std::atomic<bool> paused_for_gdb{false};  // CPU paused, waiting for next GDB command
+    std::mutex command_mutex;
+    std::condition_variable command_cv;
 
     void setup_socket();
     void wait_for_client();

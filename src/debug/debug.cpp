@@ -1138,6 +1138,7 @@ void DrawRegistersUpdateOld(void) {
 extern bool do_pse;
 
 bool CPU_IsHLTed(void);
+void CPU_ExitHLT(void);
 
 static void DrawRegisters(void) {
 	if (dbg.win_main == NULL || dbg.win_reg == NULL)
@@ -4294,10 +4295,15 @@ extern "C" INPUT_RECORD * _pdcurses_hax_inputrecord(void);
  *      emulator time used everywhere else in this code,
  *      specifically PIC_TickIndex() and PIC_FullIndex(). */
 int32_t DEBUG_Run(int32_t amount,bool quickexit) {
+	bool isHLT = CPU_IsHLTed();
+	LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_Run: amount=%d, CPU_Cycles=%d, CPU_CycleLeft=%d, HLT=%d",
+		amount, CPU_Cycles, CPU_CycleLeft, isHLT);
 	skipFirstInstruction = true;
 	CPU_CycleLeft += CPU_Cycles - amount;
 	CPU_Cycles = amount;
 	int32_t ret = (int32_t)(*cpudecoder)();
+	LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_Run: after cpudecoder, ret=%d, CPU_Cycles=%d, HLT=%d",
+		ret, CPU_Cycles, CPU_IsHLTed());
 	if (quickexit) SetCodeWinStart();
 	else {
 		// ensure all breakpoints are activated
@@ -4917,8 +4923,18 @@ void DEBUG_Enable_Handler(bool pressed) {
     if (!debugging) {
         printf("Breakpoint hit! Entering debugger.\n");
 #if C_REMOTEDEBUG
-        if (gdbServer != nullptr) {
-            gdbServer->signal_breakpoint();
+        if (gdbServer != nullptr && gdbServer->is_running()) {
+            // If GDB server is running, signal the breakpoint and return
+            // without entering the debugger UI - GDB client is in control
+            if (gdbServer->get_pending_command() == GDBCommand::CONTINUE) {
+                // Complete the continue command that was waiting for a breakpoint
+                LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit during GDB continue");
+                gdbServer->complete_command();
+            } else {
+                // Async breakpoint (Ctrl+C or similar)
+                gdbServer->signal_breakpoint();
+            }
+            return;  // Don't enter debugger UI
         }
 #endif
     }
@@ -6132,39 +6148,74 @@ uint32_t DEBUG_GetRegister(int reg) {
  }
 
  void DEBUG_Step() {
-#if C_REMOTEDEBUG
-    // If GDB server is running, directly execute one instruction
-    // instead of simulating F11 keypress which requires DEBUG_Loop
-    if (gdbServer != nullptr && gdbServer->is_running()) {
-        skipFirstInstruction = true;
-        mustCompleteInstruction = true;
-        DEBUG_Run(1, true);
-        mustCompleteInstruction = false;
-        gdbServer->signal_breakpoint();
-        return;
-    }
-#endif
-    // Normal debugger path - simulate F11 keypress
+    // Interactive debugger path - simulate F11 keypress
     DEBUG_CheckKeys(KEY_F(11));
  }
 
  void DEBUG_Continue() {
-#if C_REMOTEDEBUG
-    // If GDB server is running, directly resume execution
-    // instead of simulating F5 keypress which requires DEBUG_Loop
-    if (gdbServer != nullptr && gdbServer->is_running()) {
-        exitLoop = false;
-        debugging = false;
-        CBreakpoint::ActivateBreakpoints();
-        DOSBOX_SetNormalLoop();
-        // Note: We return immediately. When a breakpoint is hit,
-        // the breakpoint handler will call gdbServer->signal_breakpoint()
-        return;
-    }
-#endif
-    // Normal debugger path - simulate F5 keypress
+    // Interactive debugger path - simulate F5 keypress
     DEBUG_CheckKeys(KEY_F(5));
  }
+
+#if C_REMOTEDEBUG
+ // Called by the main loop to check and handle GDB step/continue requests
+ // Returns true if a step was executed (caller should return from loop)
+ bool DEBUG_CheckGDBStep() {
+    static int call_count = 0;
+    if (gdbServer == nullptr || !gdbServer->is_running()) {
+        return false;
+    }
+
+    // If paused waiting for GDB command, don't execute anything
+    if (gdbServer->is_paused()) {
+        return true;  // Prevent CPU execution
+    }
+
+    GDBCommand cmd = gdbServer->get_pending_command();
+    if (cmd == GDBCommand::NONE) {
+        return false;
+    }
+
+    LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_CheckGDBStep: cmd=%d (call #%d)", (int)cmd, ++call_count);
+
+    if (cmd == GDBCommand::STEP) {
+        uint32_t eip_before = DEBUG_GetRegister(8);  // EIP is register 8
+        bool was_halted = CPU_IsHLTed();
+        LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Executing GDB step at EIP=0x%X (HLT=%d)", eip_before, was_halted);
+
+        // If CPU is in HLT state, force exit from it
+        // HLT is just waiting for an interrupt, so we skip past it
+        if (was_halted) {
+            CPU_ExitHLT();
+            uint32_t eip_after_exit = DEBUG_GetRegister(8);
+            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Exited HLT, EIP now 0x%X", eip_after_exit);
+        }
+
+        // Execute exactly one instruction
+        skipFirstInstruction = true;
+        mustCompleteInstruction = true;
+        int32_t ret = DEBUG_Run(1, true);
+        mustCompleteInstruction = false;
+        uint32_t eip_after = DEBUG_GetRegister(8);
+        LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Step completed, ret=%d, EIP=0x%X->0x%X (HLT=%d)",
+            ret, eip_before, eip_after, CPU_IsHLTed());
+        // Pause CPU until next GDB command arrives
+        gdbServer->set_pause();
+        // Signal completion to GDB server thread
+        gdbServer->complete_command();
+        return true;  // Caller should return from loop iteration
+    } else if (cmd == GDBCommand::CONTINUE) {
+        LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Processing GDB continue request - starting execution");
+        // For continue, enable breakpoints and let normal execution proceed
+        // DON'T call complete_command() here - the breakpoint handler will signal
+        // completion when a breakpoint is hit (in DEBUG_EnableDebugger)
+        CBreakpoint::ActivateBreakpoints();
+        return false;  // Continue normal execution
+    }
+
+    return false;
+ }
+#endif
 
  #define FP_SEG(x) (uint16_t)((uint32_t)(x) >> 16)
  #define FP_OFF(x) (uint16_t)((uint32_t)(x))

@@ -461,6 +461,13 @@ static Bitu Normal_Loop(void) {
 
     try {
         while (1) {
+#if C_REMOTEDEBUG
+            // Check for GDB step/continue requests from the GDB server thread
+            if (DEBUG_CheckGDBStep()) {
+                // Step was executed, return to allow loop to be called again
+                return 0;
+            }
+#endif
             if (PIC_RunQueue()) {
                 /* now is the time to check for the NMI (Non-maskable interrupt) */
                 CPU_Check_NMI();
