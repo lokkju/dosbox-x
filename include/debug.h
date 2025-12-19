@@ -35,6 +35,7 @@ void DEBUG_Step();
 void DEBUG_Continue();
 bool DEBUG_SetBreakpoint(uint32_t address);
 bool DEBUG_RemoveBreakpoint(uint32_t address);
+bool DEBUG_SaveMemoryBin(const char* filepath, uint32_t address, uint32_t size);
 #if C_REMOTEDEBUG
 void DEBUG_StartGDBServer(int port);
 void DEBUG_StopGDBServer();

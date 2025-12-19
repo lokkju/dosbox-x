@@ -5843,6 +5843,23 @@ static void SaveMemoryBin(uint16_t seg, uint32_t ofs1, uint32_t num) {
 	DEBUG_ShowMsg("DEBUG: Memory dump binary success.\n");
 }
 
+// Public API for memory dump - used by QMP server
+bool DEBUG_SaveMemoryBin(const char* filepath, uint32_t address, uint32_t size) {
+	FILE* f = fopen(filepath, "wb");
+	if (!f) {
+		return false;
+	}
+
+	for (uint32_t x = 0; x < size; x++) {
+		uint8_t val;
+		if (mem_readb_checked((PhysPt)(address + x), &val)) val = 0;
+		fwrite(&val, 1, 1, f);
+	}
+
+	fclose(f);
+	return true;
+}
+
 static void OutputVecTable(char* filename) {
 	FILE* f = fopen(filename, "wt");
 	if (!f)

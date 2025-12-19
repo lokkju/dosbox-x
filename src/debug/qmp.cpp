@@ -25,10 +25,48 @@
 #include <chrono>
 #include <cstring>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include "qmp.h"
 #include "logging.h"
+#include "debug.h"
 
 static QMPServer* qmpServer = nullptr;
+
+// Base64 encoding table
+static const char base64_chars[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// Simple base64 encoder for binary data
+static std::string base64_encode(const std::vector<uint8_t>& data) {
+    std::string result;
+    result.reserve(((data.size() + 2) / 3) * 4);
+
+    size_t i = 0;
+    while (i < data.size()) {
+        uint32_t octet_a = i < data.size() ? data[i++] : 0;
+        uint32_t octet_b = i < data.size() ? data[i++] : 0;
+        uint32_t octet_c = i < data.size() ? data[i++] : 0;
+
+        uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+
+        result.push_back(base64_chars[(triple >> 18) & 0x3F]);
+        result.push_back(base64_chars[(triple >> 12) & 0x3F]);
+        result.push_back(base64_chars[(triple >> 6) & 0x3F]);
+        result.push_back(base64_chars[triple & 0x3F]);
+    }
+
+    // Add padding
+    size_t mod = data.size() % 3;
+    if (mod == 1) {
+        result[result.size() - 2] = '=';
+        result[result.size() - 1] = '=';
+    } else if (mod == 2) {
+        result[result.size() - 1] = '=';
+    }
+
+    return result;
+}
 
 // Key mapping from QEMU QKeyCode names to DOSBox KBD_KEYS
 const std::map<std::string, KBD_KEYS>& QMPServer::get_keymap() {
@@ -369,6 +407,8 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_input_send_event(cmd);
     } else if (execute == "query-commands") {
         handle_query_commands();
+    } else if (execute == "memdump") {
+        handle_memdump(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -389,7 +429,8 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"qmp_capabilities\"},"
         "{\"name\": \"send-key\"},"
         "{\"name\": \"input-send-event\"},"
-        "{\"name\": \"query-commands\"}"
+        "{\"name\": \"query-commands\"},"
+        "{\"name\": \"memdump\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -483,6 +524,94 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
     }
 
     send_success();
+}
+
+void QMPServer::handle_memdump(const std::string& cmd) {
+    // Extract arguments
+    std::string args_str = extract_string(cmd, "arguments");
+    if (args_str.empty()) {
+        // Try to find arguments object directly in cmd
+        size_t args_pos = cmd.find("\"arguments\"");
+        if (args_pos != std::string::npos) {
+            size_t brace = cmd.find("{", args_pos);
+            if (brace != std::string::npos) {
+                int depth = 1;
+                size_t end = brace + 1;
+                while (end < cmd.size() && depth > 0) {
+                    if (cmd[end] == '{') depth++;
+                    else if (cmd[end] == '}') depth--;
+                    end++;
+                }
+                args_str = cmd.substr(brace, end - brace);
+            }
+        }
+    }
+
+    // Parse address and size
+    int address = extract_int(args_str, "address", -1);
+    int size = extract_int(args_str, "size", -1);
+    std::string file = extract_string(args_str, "file");
+
+    if (address < 0 || size <= 0) {
+        send_error("GenericError", "Missing or invalid 'address' and/or 'size' arguments");
+        return;
+    }
+
+    if (size > 16 * 1024 * 1024) {  // Limit to 16MB
+        send_error("GenericError", "Size too large (max 16MB)");
+        return;
+    }
+
+    std::string filepath;
+    bool use_temp = file.empty();
+
+    if (use_temp) {
+        // Create temp file
+        filepath = "/tmp/dosbox_memdump_XXXXXX";
+        char* temp_path = strdup(filepath.c_str());
+        int fd = mkstemp(temp_path);
+        if (fd < 0) {
+            free(temp_path);
+            send_error("GenericError", "Failed to create temp file");
+            return;
+        }
+        close(fd);
+        filepath = temp_path;
+        free(temp_path);
+    } else {
+        filepath = file;
+    }
+
+    // Perform the memory dump
+    if (!DEBUG_SaveMemoryBin(filepath.c_str(), (uint32_t)address, (uint32_t)size)) {
+        if (use_temp) unlink(filepath.c_str());
+        send_error("GenericError", "Failed to dump memory");
+        return;
+    }
+
+    std::ostringstream response;
+    if (use_temp) {
+        // Read file and return as base64
+        std::ifstream infile(filepath, std::ios::binary);
+        if (!infile) {
+            unlink(filepath.c_str());
+            send_error("GenericError", "Failed to read dump file");
+            return;
+        }
+
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(infile)),
+                                   std::istreambuf_iterator<char>());
+        infile.close();
+        unlink(filepath.c_str());
+
+        std::string b64 = base64_encode(data);
+        response << "{\"return\": {\"data\": \"" << b64 << "\", \"size\": " << size << "}}\r\n";
+    } else {
+        // Return file path
+        response << "{\"return\": {\"file\": \"" << file << "\", \"size\": " << size << "}}\r\n";
+    }
+
+    send_response(response.str());
 }
 
 // Public interface
