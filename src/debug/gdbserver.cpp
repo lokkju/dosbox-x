@@ -40,7 +40,7 @@
 
      while (running.load()) {
          wait_for_client();
-         if (running.load()) {
+         if (running.load() && client_fd >= 0) {
              handle_client();
          }
      }
@@ -108,8 +108,13 @@
 
      LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Waiting for client connection...");
      if ((client_fd = accept(server_fd, (struct sockaddr *)&address, (socklen_t*)&addrlen)) < 0) {
+         // Accept fails when server socket is closed during shutdown - that's expected
+         if (!running.load()) {
+             LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: accept interrupted by shutdown");
+             return;
+         }
          LOG(LOG_REMOTE, LOG_ERROR)("GDBServer: accept failed");
-         exit(EXIT_FAILURE);
+         return;  // Don't exit, just return and let the loop check running flag
      }
      LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Client connected");
  }
@@ -117,10 +122,14 @@
  void GDBServer::handle_client() {
      LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Handling client");
 
+     // Reset state for new client
+     noack_mode = false;
+
      // Perform initial handshake
      if (!perform_handshake()) {
          LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Handshake failed");
          close(client_fd);
+         client_fd = -1;
          return;
      }
 
