@@ -74,6 +74,7 @@ private:
     void handle_input_send_event(const std::string& cmd);
     void handle_query_commands();
     void handle_memdump(const std::string& cmd);
+    void handle_screendump(const std::string& cmd);
 
     // Key mapping
     static KBD_KEYS qcode_to_kbd(const std::string& qcode);

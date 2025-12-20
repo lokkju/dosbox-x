@@ -30,6 +30,7 @@
 #include "qmp.h"
 #include "logging.h"
 #include "debug.h"
+#include "hardware.h"
 
 static QMPServer* qmpServer = nullptr;
 
@@ -409,6 +410,8 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_query_commands();
     } else if (execute == "memdump") {
         handle_memdump(cmd);
+    } else if (execute == "screendump") {
+        handle_screendump(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -430,7 +433,8 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"send-key\"},"
         "{\"name\": \"input-send-event\"},"
         "{\"name\": \"query-commands\"},"
-        "{\"name\": \"memdump\"}"
+        "{\"name\": \"memdump\"},"
+        "{\"name\": \"screendump\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -609,6 +613,99 @@ void QMPServer::handle_memdump(const std::string& cmd) {
     } else {
         // Return file path
         response << "{\"return\": {\"file\": \"" << file << "\", \"size\": " << size << "}}\r\n";
+    }
+
+    send_response(response.str());
+}
+
+void QMPServer::handle_screendump(const std::string& cmd) {
+    // Extract optional file argument
+    std::string args_str = extract_string(cmd, "arguments");
+    if (args_str.empty()) {
+        size_t args_pos = cmd.find("\"arguments\"");
+        if (args_pos != std::string::npos) {
+            size_t brace = cmd.find("{", args_pos);
+            if (brace != std::string::npos) {
+                int depth = 1;
+                size_t end = brace + 1;
+                while (end < cmd.size() && depth > 0) {
+                    if (cmd[end] == '{') depth++;
+                    else if (cmd[end] == '}') depth--;
+                    end++;
+                }
+                args_str = cmd.substr(brace, end - brace);
+            }
+        }
+    }
+
+    std::string file = extract_string(args_str, "file");
+
+    // Clear any previous screenshot path before triggering new capture
+    CAPTURE_ClearLastScreenshotPath();
+
+    // Trigger screenshot capture
+    CAPTURE_TakeScreenshot();
+
+    // Wait for screenshot to complete (poll with timeout)
+    const int timeout_ms = 5000;  // 5 second timeout
+    const int poll_interval_ms = 50;
+    int waited = 0;
+
+    while (CAPTURE_IsScreenshotPending() && waited < timeout_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+        waited += poll_interval_ms;
+    }
+
+    if (waited >= timeout_ms) {
+        send_error("GenericError", "Screenshot capture timed out");
+        return;
+    }
+
+    // Give a little extra time for the path to be set
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Get the screenshot path
+    std::string screenshot_path = CAPTURE_GetLastScreenshotPath();
+    if (screenshot_path.empty()) {
+        send_error("GenericError", "Screenshot capture failed - no file created");
+        return;
+    }
+
+    std::ostringstream response;
+    if (file.empty()) {
+        // Return base64-encoded screenshot data
+        std::ifstream infile(screenshot_path, std::ios::binary);
+        if (!infile) {
+            send_error("GenericError", "Failed to read screenshot file");
+            return;
+        }
+
+        std::vector<uint8_t> data((std::istreambuf_iterator<char>(infile)),
+                                   std::istreambuf_iterator<char>());
+        infile.close();
+
+        std::string b64 = base64_encode(data);
+        response << "{\"return\": {\"data\": \"" << b64 << "\", \"size\": " << data.size()
+                 << ", \"format\": \"png\", \"file\": \"" << screenshot_path << "\"}}\r\n";
+    } else {
+        // Copy to requested file path
+        std::ifstream src(screenshot_path, std::ios::binary);
+        std::ofstream dst(file, std::ios::binary);
+        if (!src || !dst) {
+            send_error("GenericError", "Failed to copy screenshot to " + file);
+            return;
+        }
+        dst << src.rdbuf();
+        src.close();
+        dst.close();
+
+        // Get file size
+        std::ifstream check(file, std::ios::binary | std::ios::ate);
+        size_t size = check.tellg();
+        check.close();
+
+        response << "{\"return\": {\"file\": \"" << file << "\", \"size\": " << size
+                 << ", \"format\": \"png\"}}\r\n";
     }
 
     send_response(response.str());
