@@ -31,6 +31,7 @@
 #include "logging.h"
 #include "debug.h"
 #include "hardware.h"
+#include "mouse.h"
 
 static QMPServer* qmpServer = nullptr;
 
@@ -507,11 +508,12 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
         return;
     }
 
+    // Accumulate relative mouse movements to send as a single event
+    float mouse_xrel = 0, mouse_yrel = 0;
+    bool has_mouse_move = false;
+
     for (const auto& event : events) {
         std::string type = extract_string(event, "type");
-        if (type != "key") {
-            continue; // Only handle keyboard events for now
-        }
 
         // Find the data object - it's nested
         size_t data_pos = event.find("\"data\"");
@@ -520,29 +522,71 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
         size_t data_start = event.find("{", data_pos);
         if (data_start == std::string::npos) continue;
 
-        // Extract from data object
         std::string data_str = event.substr(data_start);
-        bool down = extract_bool(data_str, "down", true);
 
-        // Find the key object within data
-        size_t key_pos = data_str.find("\"key\"");
-        if (key_pos == std::string::npos) continue;
+        if (type == "key") {
+            // Keyboard event
+            bool down = extract_bool(data_str, "down", true);
 
-        size_t key_start = data_str.find("{", key_pos);
-        if (key_start == std::string::npos) continue;
+            // Find the key object within data
+            size_t key_pos = data_str.find("\"key\"");
+            if (key_pos == std::string::npos) continue;
 
-        std::string key_str = data_str.substr(key_start);
-        std::string key_type = extract_string(key_str, "type");
-        std::string key_data = extract_string(key_str, "data");
+            size_t key_start = data_str.find("{", key_pos);
+            if (key_start == std::string::npos) continue;
 
-        if (key_type == "qcode" && !key_data.empty()) {
-            KBD_KEYS kbd = qcode_to_kbd(key_data);
-            if (kbd != KBD_NONE) {
-                KEYBOARD_AddKey(kbd, down);
+            std::string key_str = data_str.substr(key_start);
+            std::string key_type = extract_string(key_str, "type");
+            std::string key_data = extract_string(key_str, "data");
+
+            if (key_type == "qcode" && !key_data.empty()) {
+                KBD_KEYS kbd = qcode_to_kbd(key_data);
+                if (kbd != KBD_NONE) {
+                    KEYBOARD_AddKey(kbd, down);
+                } else {
+                    LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown qcode: %s", key_data.c_str());
+                }
+            }
+        } else if (type == "rel") {
+            // Relative mouse movement
+            std::string axis = extract_string(data_str, "axis");
+            int value = extract_int(data_str, "value", 0);
+
+            if (axis == "x") {
+                mouse_xrel += static_cast<float>(value);
+                has_mouse_move = true;
+            } else if (axis == "y") {
+                mouse_yrel += static_cast<float>(value);
+                has_mouse_move = true;
+            }
+        } else if (type == "btn") {
+            // Mouse button event
+            std::string button = extract_string(data_str, "button");
+            bool down = extract_bool(data_str, "down", true);
+
+            uint8_t btn_id = 0;
+            if (button == "left") {
+                btn_id = 0;
+            } else if (button == "right") {
+                btn_id = 1;
+            } else if (button == "middle") {
+                btn_id = 2;
             } else {
-                LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown qcode: %s", key_data.c_str());
+                LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown mouse button: %s", button.c_str());
+                continue;
+            }
+
+            if (down) {
+                Mouse_ButtonPressed(btn_id);
+            } else {
+                Mouse_ButtonReleased(btn_id);
             }
         }
+    }
+
+    // Apply accumulated mouse movement
+    if (has_mouse_move) {
+        Mouse_CursorMoved(mouse_xrel, mouse_yrel, 0, 0, true);
     }
 
     send_success();
