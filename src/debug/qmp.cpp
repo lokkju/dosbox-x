@@ -416,6 +416,14 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_savestate(cmd);
     } else if (execute == "loadstate") {
         handle_loadstate(cmd);
+    } else if (execute == "stop") {
+        handle_stop();
+    } else if (execute == "cont") {
+        handle_cont();
+    } else if (execute == "system_reset") {
+        handle_system_reset(cmd);
+    } else if (execute == "query-status") {
+        handle_query_status();
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -437,10 +445,14 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"send-key\"},"
         "{\"name\": \"input-send-event\"},"
         "{\"name\": \"query-commands\"},"
+        "{\"name\": \"query-status\"},"
         "{\"name\": \"memdump\"},"
         "{\"name\": \"screendump\"},"
         "{\"name\": \"savestate\"},"
-        "{\"name\": \"loadstate\"}"
+        "{\"name\": \"loadstate\"},"
+        "{\"name\": \"stop\"},"
+        "{\"name\": \"cont\"},"
+        "{\"name\": \"system_reset\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -841,6 +853,95 @@ void QMPServer::handle_loadstate(const std::string& cmd) {
     } else {
         send_error("GenericError", "Load state failed - unknown error");
     }
+}
+
+void QMPServer::handle_stop() {
+    // Pause the emulator
+    if (EMULATOR_IsPaused()) {
+        // Already paused - return success anyway for idempotency
+        send_success();
+        return;
+    }
+
+    EMULATOR_RequestPause();
+
+    // Wait briefly for pause to take effect
+    const int timeout_ms = 1000;
+    const int poll_interval_ms = 10;
+    int waited = 0;
+
+    while (!EMULATOR_IsPaused() && waited < timeout_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+        waited += poll_interval_ms;
+    }
+
+    if (EMULATOR_IsPaused()) {
+        send_success();
+    } else {
+        send_error("GenericError", "Failed to pause emulator");
+    }
+}
+
+void QMPServer::handle_cont() {
+    // Resume the emulator
+    if (!EMULATOR_IsPaused()) {
+        // Already running - return success anyway for idempotency
+        send_success();
+        return;
+    }
+
+    EMULATOR_RequestResume();
+
+    // Wait briefly for resume to take effect
+    const int timeout_ms = 1000;
+    const int poll_interval_ms = 10;
+    int waited = 0;
+
+    while (EMULATOR_IsPaused() && waited < timeout_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+        waited += poll_interval_ms;
+    }
+
+    if (!EMULATOR_IsPaused()) {
+        send_success();
+    } else {
+        send_error("GenericError", "Failed to resume emulator");
+    }
+}
+
+void QMPServer::handle_system_reset(const std::string& cmd) {
+    // Extract optional dos_only argument
+    std::string args_str;
+    size_t args_pos = cmd.find("\"arguments\"");
+    if (args_pos != std::string::npos) {
+        size_t brace = cmd.find("{", args_pos);
+        if (brace != std::string::npos) {
+            int depth = 1;
+            size_t end = brace + 1;
+            while (end < cmd.size() && depth > 0) {
+                if (cmd[end] == '{') depth++;
+                else if (cmd[end] == '}') depth--;
+                end++;
+            }
+            args_str = cmd.substr(brace, end - brace);
+        }
+    }
+
+    bool dos_only = extract_bool(args_str, "dos_only", false);
+
+    // Request reset (will be processed by main thread)
+    EMULATOR_RequestReset(dos_only);
+
+    // Send success immediately - reset happens asynchronously
+    send_success();
+}
+
+void QMPServer::handle_query_status() {
+    std::string status = EMULATOR_IsPaused() ? "paused" : "running";
+    std::ostringstream response;
+    response << "{\"return\": {\"status\": \"" << status << "\", \"running\": "
+             << (EMULATOR_IsPaused() ? "false" : "true") << "}}\r\n";
+    send_response(response.str());
 }
 
 // Public interface

@@ -469,6 +469,8 @@ static Bitu Normal_Loop(void) {
             }
             // Check for save/load state requests from QMP
             SAVESTATE_CheckPendingRequest();
+            // Check for emulator control requests from QMP (pause/reset)
+            EMULATOR_CheckPendingControl();
 #endif
             if (PIC_RunQueue()) {
                 /* now is the time to check for the NMI (Non-maskable interrupt) */

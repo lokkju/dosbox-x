@@ -317,6 +317,16 @@ bool CheckPreventCap(void);
 void ApplyPreventCap(void);
 void ApplyPreventCapMenu(void);
 
+#if C_REMOTEDEBUG
+// Emulator control API for QMP
+enum class EmulatorControlRequest { NONE, PAUSE, RESUME, RESET, RESET_DOS };
+void EMULATOR_RequestPause();
+void EMULATOR_RequestResume();
+void EMULATOR_RequestReset(bool dos_only = false);
+bool EMULATOR_IsPaused();
+bool EMULATOR_CheckPendingControl();
+#endif
+
 #endif /* DOSBOX_DOSBOX_H */
 
 #ifndef SAVE_STATE_H_INCLUDED

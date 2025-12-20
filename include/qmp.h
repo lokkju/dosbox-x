@@ -77,6 +77,10 @@ private:
     void handle_screendump(const std::string& cmd);
     void handle_savestate(const std::string& cmd);
     void handle_loadstate(const std::string& cmd);
+    void handle_stop();
+    void handle_cont();
+    void handle_system_reset(const std::string& cmd);
+    void handle_query_status();
 
     // Key mapping
     static KBD_KEYS qcode_to_kbd(const std::string& qcode);
