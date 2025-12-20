@@ -477,6 +477,15 @@ void readString(std::istream& stream, std::string& data)
 }
 #endif //SAVE_STATE_H_INCLUDED
 
+#if C_REMOTEDEBUG
+// Async save/load state API for QMP
+void SAVESTATE_RequestSave(const std::string& filepath);
+void SAVESTATE_RequestLoad(const std::string& filepath);
+bool SAVESTATE_IsPending();
+bool SAVESTATE_IsComplete(std::string& error_out);
+bool SAVESTATE_CheckPendingRequest();
+#endif
+
 #if defined (WIN32)
 int _wmkdir_p(const wchar_t *pathname);
 #else

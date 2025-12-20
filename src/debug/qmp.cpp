@@ -412,6 +412,10 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_memdump(cmd);
     } else if (execute == "screendump") {
         handle_screendump(cmd);
+    } else if (execute == "savestate") {
+        handle_savestate(cmd);
+    } else if (execute == "loadstate") {
+        handle_loadstate(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -434,7 +438,9 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"input-send-event\"},"
         "{\"name\": \"query-commands\"},"
         "{\"name\": \"memdump\"},"
-        "{\"name\": \"screendump\"}"
+        "{\"name\": \"screendump\"},"
+        "{\"name\": \"savestate\"},"
+        "{\"name\": \"loadstate\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -709,6 +715,132 @@ void QMPServer::handle_screendump(const std::string& cmd) {
     }
 
     send_response(response.str());
+}
+
+void QMPServer::handle_savestate(const std::string& cmd) {
+    // Extract file argument (required)
+    std::string args_str = extract_string(cmd, "arguments");
+    if (args_str.empty()) {
+        size_t args_pos = cmd.find("\"arguments\"");
+        if (args_pos != std::string::npos) {
+            size_t brace = cmd.find("{", args_pos);
+            if (brace != std::string::npos) {
+                int depth = 1;
+                size_t end = brace + 1;
+                while (end < cmd.size() && depth > 0) {
+                    if (cmd[end] == '{') depth++;
+                    else if (cmd[end] == '}') depth--;
+                    end++;
+                }
+                args_str = cmd.substr(brace, end - brace);
+            }
+        }
+    }
+
+    std::string file = extract_string(args_str, "file");
+    if (file.empty()) {
+        send_error("GenericError", "Missing required 'file' argument");
+        return;
+    }
+
+    // Request save state (async, processed by main thread)
+    SAVESTATE_RequestSave(file);
+
+    // Wait for completion with timeout
+    const int timeout_ms = 30000;  // 30 second timeout for save
+    const int poll_interval_ms = 100;
+    int waited = 0;
+
+    while (SAVESTATE_IsPending() && waited < timeout_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+        waited += poll_interval_ms;
+    }
+
+    if (waited >= timeout_ms) {
+        send_error("GenericError", "Save state operation timed out");
+        return;
+    }
+
+    // Check result
+    std::string error;
+    if (SAVESTATE_IsComplete(error)) {
+        if (error.empty()) {
+            std::ostringstream response;
+            response << "{\"return\": {\"file\": \"" << file << "\"}}\r\n";
+            send_response(response.str());
+        } else {
+            send_error("GenericError", error);
+        }
+    } else {
+        send_error("GenericError", "Save state failed - unknown error");
+    }
+}
+
+void QMPServer::handle_loadstate(const std::string& cmd) {
+    // Extract file argument (required)
+    std::string args_str = extract_string(cmd, "arguments");
+    if (args_str.empty()) {
+        size_t args_pos = cmd.find("\"arguments\"");
+        if (args_pos != std::string::npos) {
+            size_t brace = cmd.find("{", args_pos);
+            if (brace != std::string::npos) {
+                int depth = 1;
+                size_t end = brace + 1;
+                while (end < cmd.size() && depth > 0) {
+                    if (cmd[end] == '{') depth++;
+                    else if (cmd[end] == '}') depth--;
+                    end++;
+                }
+                args_str = cmd.substr(brace, end - brace);
+            }
+        }
+    }
+
+    std::string file = extract_string(args_str, "file");
+    if (file.empty()) {
+        send_error("GenericError", "Missing required 'file' argument");
+        return;
+    }
+
+    // Check if file exists
+    std::ifstream check(file);
+    if (!check.good()) {
+        send_error("GenericError", "State file not found: " + file);
+        return;
+    }
+    check.close();
+
+    // Request load state (async, processed by main thread)
+    SAVESTATE_RequestLoad(file);
+
+    // Wait for completion with timeout
+    const int timeout_ms = 30000;  // 30 second timeout for load
+    const int poll_interval_ms = 100;
+    int waited = 0;
+
+    while (SAVESTATE_IsPending() && waited < timeout_ms) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(poll_interval_ms));
+        waited += poll_interval_ms;
+    }
+
+    if (waited >= timeout_ms) {
+        send_error("GenericError", "Load state operation timed out");
+        return;
+    }
+
+    // Check result
+    std::string error;
+    if (SAVESTATE_IsComplete(error)) {
+        if (error.empty()) {
+            std::ostringstream response;
+            response << "{\"return\": {\"file\": \"" << file << "\"}}\r\n";
+            send_response(response.str());
+        } else {
+            send_error("GenericError", error);
+        }
+    } else {
+        send_error("GenericError", "Load state failed - unknown error");
+    }
 }
 
 // Public interface

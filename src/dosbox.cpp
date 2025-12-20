@@ -467,6 +467,8 @@ static Bitu Normal_Loop(void) {
                 // Step was executed, return to allow loop to be called again
                 return 0;
             }
+            // Check for save/load state requests from QMP
+            SAVESTATE_CheckPendingRequest();
 #endif
             if (PIC_RunQueue()) {
                 /* now is the time to check for the NMI (Non-maskable interrupt) */
