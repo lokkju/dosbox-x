@@ -81,7 +81,6 @@ private:
     void handle_cont();
     void handle_system_reset(const std::string& cmd);
     void handle_query_status();
-    void handle_debug_execute(const std::string& cmd);
 
     // Key mapping
     static KBD_KEYS qcode_to_kbd(const std::string& qcode);

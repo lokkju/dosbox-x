@@ -425,8 +425,6 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_system_reset(cmd);
     } else if (execute == "query-status") {
         handle_query_status();
-    } else if (execute == "debug-execute") {
-        handle_debug_execute(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -455,8 +453,7 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"loadstate\"},"
         "{\"name\": \"stop\"},"
         "{\"name\": \"cont\"},"
-        "{\"name\": \"system_reset\"},"
-        "{\"name\": \"debug-execute\"}"
+        "{\"name\": \"system_reset\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -1006,123 +1003,6 @@ void QMPServer::handle_query_status() {
         response << ", \"reason\": \"" << debug_reason << "\"";
     }
     response << "}}}\r\n";
-    send_response(response.str());
-}
-
-void QMPServer::handle_debug_execute(const std::string& cmd) {
-    // Execute a DOS command with breakpoint at entry for GDB debugging
-    // Requires GDB client to be connected
-
-    // Check if GDB client is connected
-    if (!DEBUG_IsGDBClientConnected()) {
-        send_error("GenericError", "No GDB client connected. Connect GDB first, then use debug-execute.");
-        return;
-    }
-
-    // Extract command argument
-    std::string args_str;
-    size_t args_pos = cmd.find("\"arguments\"");
-    if (args_pos != std::string::npos) {
-        size_t brace = cmd.find("{", args_pos);
-        if (brace != std::string::npos) {
-            int depth = 1;
-            size_t end = brace + 1;
-            while (end < cmd.size() && depth > 0) {
-                if (cmd[end] == '{') depth++;
-                else if (cmd[end] == '}') depth--;
-                end++;
-            }
-            args_str = cmd.substr(brace, end - brace);
-        }
-    }
-
-    std::string command = extract_string(args_str, "command");
-    if (command.empty()) {
-        send_error("GenericError", "Missing required 'command' argument");
-        return;
-    }
-
-    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: debug-execute command='%s'", command.c_str());
-
-    // Set the GDB break-on-exec flag
-    DEBUG_SetGDBBreakOnExec(true);
-
-    // Ensure modifier keys are released before typing
-    KEYBOARD_AddKey(KBD_leftshift, false);
-    KEYBOARD_AddKey(KBD_rightshift, false);
-    KEYBOARD_AddKey(KBD_leftctrl, false);
-    KEYBOARD_AddKey(KBD_rightctrl, false);
-    KEYBOARD_AddKey(KBD_leftalt, false);
-    KEYBOARD_AddKey(KBD_rightalt, false);
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-
-    // Type the command followed by Enter
-    // This simulates typing the command at the DOS prompt
-
-    // Character to KBD_KEYS mapping (KBD enum is in QWERTY order, not alphabetical!)
-    static const KBD_KEYS char_to_kbd[26] = {
-        KBD_a, KBD_b, KBD_c, KBD_d, KBD_e, KBD_f, KBD_g, KBD_h, KBD_i, KBD_j,
-        KBD_k, KBD_l, KBD_m, KBD_n, KBD_o, KBD_p, KBD_q, KBD_r, KBD_s, KBD_t,
-        KBD_u, KBD_v, KBD_w, KBD_x, KBD_y, KBD_z
-    };
-
-    for (char c : command) {
-        KBD_KEYS key = KBD_NONE;
-        bool need_shift = false;
-
-        // Map ASCII to keyboard keys
-        if (c >= 'a' && c <= 'z') {
-            key = char_to_kbd[c - 'a'];
-        } else if (c >= 'A' && c <= 'Z') {
-            key = char_to_kbd[c - 'A'];
-            need_shift = true;
-        } else if (c >= '0' && c <= '9') {
-            // Numbers ARE contiguous in the enum
-            key = static_cast<KBD_KEYS>(KBD_1 + (c - '1'));
-            if (c == '0') key = KBD_0;  // 0 comes after 9 in enum
-        } else if (c == ' ') {
-            key = KBD_space;
-        } else if (c == '.') {
-            key = KBD_period;
-        } else if (c == ':') {
-            key = KBD_semicolon;
-            need_shift = true;
-        } else if (c == '\\') {
-            key = KBD_backslash;
-        } else if (c == '/') {
-            key = KBD_slash;
-        } else if (c == '-') {
-            key = KBD_minus;
-        } else if (c == '_') {
-            key = KBD_minus;
-            need_shift = true;
-        }
-
-        if (key != KBD_NONE) {
-            if (need_shift) {
-                KEYBOARD_AddKey(KBD_leftshift, true);
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            }
-            KEYBOARD_AddKey(key, true);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            KEYBOARD_AddKey(key, false);
-            if (need_shift) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                KEYBOARD_AddKey(KBD_leftshift, false);
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(30));
-        }
-    }
-
-    // Press Enter to execute the command
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    KEYBOARD_AddKey(KBD_enter, true);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    KEYBOARD_AddKey(KBD_enter, false);
-
-    // Return success - GDB client will see the pause when breakpoint is hit
-    std::ostringstream response;
-    response << "{\"return\": {\"command\": \"" << command << "\", \"status\": \"executing\"}}\r\n";
     send_response(response.str());
 }
 
