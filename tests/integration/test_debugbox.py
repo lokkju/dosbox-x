@@ -73,7 +73,7 @@ def qmp_raw_command(command: str, args: dict = None, host: str = QMP_HOST, port:
     """Send a raw QMP command and return the response.
 
     This is used for commands not supported by the dbxdebug QMPClient,
-    such as query-status, stop, cont, and debug-execute.
+    such as query-status, stop, cont, and debug-break-on-exec.
     """
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(5.0)
@@ -693,123 +693,6 @@ class TestDebuggerMutualExclusion:
                 pass  # Best effort check
 
             print("\nMutual exclusion working: Interactive debugger blocked while GDB connected")
-
-
-class TestDebugExecute:
-    """Test the QMP debug-execute command for GDB-aware program launching.
-
-    The debug-execute command allows launching a program with breakpoint on entry,
-    designed for use with GDB. It requires a GDB client to be connected.
-    """
-
-    def test_debug_execute_requires_gdb_connection(self, qmp, servers_available):
-        """debug-execute should fail if no GDB client is connected.
-
-        The command requires GDB to be connected because the breakpoint
-        is meant to be caught by the GDB client.
-        """
-        # Ensure no GDB connection exists
-        # Note: Other tests may have left GDB connected, so we just test the command
-
-        try:
-            response = qmp_raw_command("debug-execute", {"command": "DBXTEST.COM"})
-
-            # This might succeed if GDB is connected from another test,
-            # or fail with an error if no GDB client
-            if 'error' in response:
-                error = response.get('error', {})
-                # Should get GenericError about GDB not connected
-                print(f"\ndebug-execute correctly rejected: {error.get('desc', error)}")
-            else:
-                # If it succeeded, GDB must have been connected
-                print("\ndebug-execute succeeded (GDB was connected)")
-
-        except Exception as e:
-            # Some error is expected if GDB not connected
-            print(f"\ndebug-execute error (expected if no GDB): {e}")
-
-    @pytest.fixture
-    def test_drive(self):
-        """Get the drive letter for test assets, or skip if not configured."""
-        drive = os.environ.get('DEBUGBOX_TEST_DRIVE', '').strip().upper()
-        if not drive:
-            pytest.skip(
-                "DEBUGBOX_TEST_DRIVE not set. Set to the drive letter where "
-                "tests/integration/assets/ is mounted in DOSBox-X "
-                "(e.g., export DEBUGBOX_TEST_DRIVE=T)"
-            )
-        if len(drive) != 1 or not drive.isalpha():
-            pytest.skip(f"Invalid drive letter: {drive}")
-        yield drive
-
-    def test_debug_execute_with_gdb_connected(self, test_drive, servers_available):
-        """debug-execute should work when GDB client is connected.
-
-        When GDB is connected, debug-execute should:
-        1. Accept the command
-        2. Set a breakpoint on entry
-        3. Type the command
-        4. Return success (program will run and hit breakpoint)
-        """
-        # Ensure test COM file exists
-        create_test_com_file()
-
-        # Connect GDB first
-        with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
-            # Verify GDB is connected
-            regs = gdb.read_registers()
-            assert regs is not None
-
-            # Ensure emulator is running
-            try:
-                qmp_raw_command("cont")
-            except Exception:
-                pass
-
-            time.sleep(0.2)
-
-            # Change to test drive first using send-key (type_text doesn't handle ':')
-            # Use QMPClient for keyboard input
-            with QMPClient(host=QMP_HOST, port=QMP_PORT) as qmp:
-                qmp.send_key([test_drive.lower()])  # Letter
-                qmp.send_key(["shift", "semicolon"])  # Colon
-                time.sleep(0.1)
-                qmp.send_key(["ret"])
-                time.sleep(0.3)
-
-            # Use debug-execute with the test COM file (separate connection)
-            try:
-                response = qmp_raw_command("debug-execute", {"command": "DBXTEST.COM"})
-
-                if 'error' in response:
-                    error = response.get('error', {})
-                    print(f"\ndebug-execute error: {error.get('desc', error)}")
-                    pytest.fail(f"debug-execute failed: {error.get('desc', error)}")
-                else:
-                    print("\ndebug-execute command accepted")
-                    # Wait for command to execute and hit breakpoint
-                    time.sleep(1.0)
-
-                    # The program should hit breakpoint and pause for GDB
-                    # Read registers to verify we're paused at entry point
-                    regs_after = gdb.read_registers()
-                    assert regs_after is not None, "Failed to read registers after debug-execute"
-
-                    eip = regs_after['eip']
-                    eip_offset = eip & 0xFFFF
-
-                    # COM entry point should be at offset 0x100
-                    print(f"EIP after debug-execute: 0x{eip:08X} (offset: 0x{eip_offset:04X})")
-
-                    # Verify we're at or near the entry point
-                    assert eip_offset in (0x100, 0x101, 0x102), (
-                        f"Expected EIP offset ~0x100 for COM entry point, "
-                        f"got 0x{eip_offset:04X}"
-                    )
-
-            except Exception as e:
-                print(f"\ndebug-execute exception: {e}")
-                raise
 
 
 class TestRemoteDebugIntegration:
