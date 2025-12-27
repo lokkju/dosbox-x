@@ -67,6 +67,44 @@ def is_qmp_available(host: str = QMP_HOST, port: int = QMP_PORT) -> bool:
         return False
 
 
+import json
+
+def qmp_raw_command(command: str, args: dict = None, host: str = QMP_HOST, port: int = QMP_PORT) -> dict:
+    """Send a raw QMP command and return the response.
+
+    This is used for commands not supported by the dbxdebug QMPClient,
+    such as query-status, stop, cont, and debug-execute.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(5.0)
+    sock.connect((host, port))
+
+    try:
+        # Read greeting
+        greeting = b''
+        while b'\n' not in greeting:
+            greeting += sock.recv(1024)
+
+        # Send qmp_capabilities
+        sock.sendall(b'{"execute": "qmp_capabilities"}\n')
+        resp = sock.recv(4096)
+
+        # Send the actual command
+        cmd = {"execute": command}
+        if args:
+            cmd["arguments"] = args
+        sock.sendall((json.dumps(cmd) + '\n').encode())
+
+        # Read response
+        resp = b''
+        while b'\n' not in resp:
+            resp += sock.recv(4096)
+
+        return json.loads(resp.decode())
+    finally:
+        sock.close()
+
+
 @contextmanager
 def gdb_connection(host: str = GDB_HOST, port: int = GDB_PORT):
     """Context manager that detaches before closing to clean up debugger UI."""
@@ -111,26 +149,14 @@ def qmp(servers_available):
 
 
 @pytest.fixture
-def ensure_running(qmp):
+def ensure_running():
     """Ensure the emulator is running (not paused) before the test."""
-    # First check current status
     try:
-        # Use raw command if query_status not available
-        if hasattr(qmp, 'query_status'):
-            status = qmp.query_status()
-        else:
-            # Send raw query-status command
-            qmp._send_command("query-status")
-            response = qmp._receive_response()
-            status = response.get('return', {})
+        response = qmp_raw_command("query-status")
+        status = response.get('return', {})
 
         if status.get('status') == 'paused' or not status.get('running', True):
-            # Resume the emulator
-            if hasattr(qmp, 'cont'):
-                qmp.cont()
-            else:
-                qmp._send_command("cont")
-                qmp._receive_response()
+            qmp_raw_command("cont")
             time.sleep(0.2)
     except Exception:
         pass  # Best effort
@@ -191,12 +217,8 @@ class TestDebugboxBasic:
 
         # Check if emulator is paused via query-status
         try:
-            if hasattr(qmp, 'query_status'):
-                status = qmp.query_status()
-            else:
-                qmp._send_command("query-status")
-                response = qmp._receive_response()
-                status = response.get('return', {})
+            response = qmp_raw_command("query-status")
+            status = response.get('return', {})
 
             # Debugger mode should pause execution
             is_paused = status.get('status') == 'paused' or not status.get('running', True)
@@ -210,11 +232,7 @@ class TestDebugboxBasic:
 
         # Resume to clean up
         try:
-            if hasattr(qmp, 'cont'):
-                qmp.cont()
-            else:
-                qmp._send_command("cont")
-                qmp._receive_response()
+            qmp_raw_command("cont")
         except Exception:
             pass
 
@@ -356,11 +374,7 @@ class TestDebugboxEntryPointFull:
 
         # Resume emulator if paused
         try:
-            if hasattr(qmp, 'cont'):
-                qmp.cont()
-            else:
-                qmp._send_command("cont")
-                qmp._receive_response()
+            qmp_raw_command("cont")
         except Exception:
             pass
 
@@ -438,11 +452,7 @@ class TestDebugboxEntryPointFull:
 
         # Resume emulator if paused
         try:
-            if hasattr(qmp, 'cont'):
-                qmp.cont()
-            else:
-                qmp._send_command("cont")
-                qmp._receive_response()
+            qmp_raw_command("cont")
         except Exception:
             pass
 
@@ -463,12 +473,8 @@ class TestDebugboxEntryPointFull:
 
         # Query status - should show debug pause state
         try:
-            if hasattr(qmp, 'query_status'):
-                status = qmp.query_status()
-            else:
-                qmp._send_command("query-status")
-                response = qmp._receive_response()
-                status = response.get('return', {})
+            response = qmp_raw_command("query-status")
+            status = response.get('return', {})
 
             print(f"\nQMP status after DEBUGBOX: {status}")
 
@@ -492,11 +498,7 @@ class TestDebugboxEntryPointFull:
         finally:
             # Resume to clean up
             try:
-                if hasattr(qmp, 'cont'):
-                    qmp.cont()
-                else:
-                    qmp._send_command("cont")
-                    qmp._receive_response()
+                qmp_raw_command("cont")
             except Exception:
                 pass
 
@@ -504,90 +506,60 @@ class TestDebugboxEntryPointFull:
 class TestQueryStatus:
     """Test QMP query-status command for debugging state."""
 
-    def test_query_status_returns_valid_response(self, qmp, servers_available):
+    def test_query_status_returns_valid_response(self, servers_available):
         """query-status should return valid running/paused state with debug info."""
-        try:
-            if hasattr(qmp, 'query_status'):
-                status = qmp.query_status()
-            else:
-                qmp._send_command("query-status")
-                response = qmp._receive_response()
-                status = response.get('return', {})
+        response = qmp_raw_command("query-status")
+        status = response.get('return', {})
 
-            # Status should have required fields
-            assert 'status' in status, "Missing 'status' field"
-            assert 'running' in status, "Missing 'running' field"
-            assert status['status'] in ('running', 'paused')
-            assert isinstance(status['running'], bool)
+        # Status should have required fields
+        assert 'status' in status, "Missing 'status' field"
+        assert 'running' in status, "Missing 'running' field"
+        assert status['status'] in ('running', 'paused')
+        assert isinstance(status['running'], bool)
 
-            # Should have emulator-paused field
-            assert 'emulator-paused' in status, "Missing 'emulator-paused' field"
-            assert isinstance(status['emulator-paused'], bool)
+        # Should have emulator-paused field
+        assert 'emulator-paused' in status, "Missing 'emulator-paused' field"
+        assert isinstance(status['emulator-paused'], bool)
 
-            # Should have debug object with active and paused fields
-            assert 'debug' in status, "Missing 'debug' object"
-            debug = status['debug']
-            assert 'active' in debug, "Missing 'debug.active' field"
-            assert 'paused' in debug, "Missing 'debug.paused' field"
-            assert isinstance(debug['active'], bool)
-            assert isinstance(debug['paused'], bool)
+        # Should have debug object with active and paused fields
+        assert 'debug' in status, "Missing 'debug' object"
+        debug = status['debug']
+        assert 'active' in debug, "Missing 'debug.active' field"
+        assert 'paused' in debug, "Missing 'debug.paused' field"
+        assert isinstance(debug['active'], bool)
+        assert isinstance(debug['paused'], bool)
 
-            # If debug is paused, reason should be present
-            if debug['paused']:
-                assert 'reason' in debug, "Missing 'debug.reason' when paused"
+        # If debug is paused, reason should be present
+        if debug['paused']:
+            assert 'reason' in debug, "Missing 'debug.reason' when paused"
 
-            print(f"\nquery-status response: {status}")
+        print(f"\nquery-status response: {status}")
 
-        except (QMPError, AttributeError) as e:
-            pytest.skip(f"query-status not supported: {e}")
-
-    def test_stop_and_cont_commands(self, qmp, servers_available):
+    def test_stop_and_cont_commands(self, servers_available):
         """stop and cont commands should control emulator pause state."""
-        try:
-            # Stop the emulator
-            if hasattr(qmp, 'stop'):
-                qmp.stop()
-            else:
-                qmp._send_command("stop")
-                qmp._receive_response()
+        # Stop the emulator
+        qmp_raw_command("stop")
+        time.sleep(0.2)
 
-            time.sleep(0.2)
+        # Verify paused via emulator-paused (not debug pause)
+        response = qmp_raw_command("query-status")
+        status = response.get('return', {})
 
-            # Verify paused via emulator-paused (not debug pause)
-            if hasattr(qmp, 'query_status'):
-                status = qmp.query_status()
-            else:
-                qmp._send_command("query-status")
-                response = qmp._receive_response()
-                status = response.get('return', {})
+        assert status.get('status') == 'paused', f"Expected 'paused', got {status.get('status')}"
+        assert status.get('emulator-paused') is True, "Expected emulator-paused to be true"
+        assert status.get('running') is False, "Expected running to be false"
 
-            assert status.get('status') == 'paused', f"Expected 'paused', got {status.get('status')}"
-            assert status.get('emulator-paused') is True, "Expected emulator-paused to be true"
-            assert status.get('running') is False, "Expected running to be false"
+        # Resume
+        qmp_raw_command("cont")
+        time.sleep(0.2)
 
-            # Resume
-            if hasattr(qmp, 'cont'):
-                qmp.cont()
-            else:
-                qmp._send_command("cont")
-                qmp._receive_response()
+        # Verify running
+        response = qmp_raw_command("query-status")
+        status = response.get('return', {})
 
-            time.sleep(0.2)
-
-            # Verify running
-            if hasattr(qmp, 'query_status'):
-                status = qmp.query_status()
-            else:
-                qmp._send_command("query-status")
-                response = qmp._receive_response()
-                status = response.get('return', {})
-
-            assert status.get('status') == 'running', f"Expected 'running', got {status.get('status')}"
-            assert status.get('emulator-paused') is False, "Expected emulator-paused to be false"
-            assert status.get('running') is True, "Expected running to be true"
-
-        except (QMPError, AttributeError) as e:
-            pytest.skip(f"stop/cont not supported: {e}")
+        assert status.get('status') == 'running', f"Expected 'running', got {status.get('status')}"
+        assert status.get('emulator-paused') is False, "Expected emulator-paused to be false"
+        assert status.get('running') is True, "Expected running to be true"
 
 
 class TestGdbPauseState:
@@ -611,29 +583,20 @@ class TestGdbPauseState:
             # Step to pause for GDB
             gdb.step()
 
-            # Now check via QMP
-            with QMPClient(host=QMP_HOST, port=QMP_PORT) as qmp:
-                try:
-                    if hasattr(qmp, 'query_status'):
-                        status = qmp.query_status()
-                    else:
-                        qmp._send_command("query-status")
-                        response = qmp._receive_response()
-                        status = response.get('return', {})
+            # Now check via QMP using raw command
+            response = qmp_raw_command("query-status")
+            status = response.get('return', {})
 
-                    print(f"\nQMP status while GDB is paused: {status}")
+            print(f"\nQMP status while GDB is paused: {status}")
 
-                    # Should show debug active and paused
-                    debug = status.get('debug', {})
-                    assert debug.get('active') is True, "Expected debug.active=true when GDB connected"
-                    assert debug.get('paused') is True, "Expected debug.paused=true after GDB step"
-                    assert debug.get('reason') == 'gdb', f"Expected reason='gdb', got {debug.get('reason')}"
+            # Should show debug active and paused
+            debug = status.get('debug', {})
+            assert debug.get('active') is True, "Expected debug.active=true when GDB connected"
+            assert debug.get('paused') is True, "Expected debug.paused=true after GDB step"
+            assert debug.get('reason') == 'gdb', f"Expected reason='gdb', got {debug.get('reason')}"
 
-                    # Overall status should be paused
-                    assert status.get('status') == 'paused', "Expected status='paused'"
-
-                except (QMPError, AttributeError) as e:
-                    pytest.skip(f"query-status not supported: {e}")
+            # Overall status should be paused
+            assert status.get('status') == 'paused', "Expected status='paused'"
 
     def test_gdb_step_pauses_after_one_instruction(self, servers_available):
         """GDB step should execute one instruction and pause."""
@@ -678,7 +641,7 @@ class TestDebuggerMutualExclusion:
     When the interactive debugger is active, new GDB connections should be rejected.
     """
 
-    def test_gdb_connection_blocks_interactive_debugger(self, qmp, servers_available):
+    def test_gdb_connection_blocks_interactive_debugger(self, servers_available):
         """With GDB connected, attempting to open interactive debugger should fail.
 
         When a GDB client is connected, typing DEBUGBOX without arguments (which
@@ -693,20 +656,18 @@ class TestDebuggerMutualExclusion:
 
             # Ensure emulator is running
             try:
-                if hasattr(qmp, 'cont'):
-                    qmp.cont()
-                else:
-                    qmp._send_command("cont")
-                    qmp._receive_response()
+                qmp_raw_command("cont")
             except Exception:
                 pass
 
             time.sleep(0.2)
 
             # Try to activate interactive debugger via DEBUGBOX
-            qmp.type_text("DEBUGBOX")
-            time.sleep(0.1)
-            qmp.send_key(["ret"])
+            # Use QMPClient for keyboard input in a separate block
+            with QMPClient(host=QMP_HOST, port=QMP_PORT) as qmp:
+                qmp.type_text("DEBUGBOX")
+                time.sleep(0.1)
+                qmp.send_key(["ret"])
             time.sleep(0.5)
 
             # The interactive debugger should NOT have activated
@@ -716,12 +677,8 @@ class TestDebuggerMutualExclusion:
 
             # Query status - should still show GDB as the debug controller
             try:
-                if hasattr(qmp, 'query_status'):
-                    status = qmp.query_status()
-                else:
-                    qmp._send_command("query-status")
-                    response = qmp._receive_response()
-                    status = response.get('return', {})
+                response = qmp_raw_command("query-status")
+                status = response.get('return', {})
 
                 debug = status.get('debug', {})
                 # If debug is active and paused, the reason should be gdb, not interactive
@@ -755,8 +712,7 @@ class TestDebugExecute:
         # Note: Other tests may have left GDB connected, so we just test the command
 
         try:
-            qmp._send_command("debug-execute", {"command": "DBXTEST.COM"})
-            response = qmp._receive_response()
+            response = qmp_raw_command("debug-execute", {"command": "DBXTEST.COM"})
 
             # This might succeed if GDB is connected from another test,
             # or fail with an error if no GDB client
@@ -772,7 +728,21 @@ class TestDebugExecute:
             # Some error is expected if GDB not connected
             print(f"\ndebug-execute error (expected if no GDB): {e}")
 
-    def test_debug_execute_with_gdb_connected(self, qmp, servers_available):
+    @pytest.fixture
+    def test_drive(self):
+        """Get the drive letter for test assets, or skip if not configured."""
+        drive = os.environ.get('DEBUGBOX_TEST_DRIVE', '').strip().upper()
+        if not drive:
+            pytest.skip(
+                "DEBUGBOX_TEST_DRIVE not set. Set to the drive letter where "
+                "tests/integration/assets/ is mounted in DOSBox-X "
+                "(e.g., export DEBUGBOX_TEST_DRIVE=T)"
+            )
+        if len(drive) != 1 or not drive.isalpha():
+            pytest.skip(f"Invalid drive letter: {drive}")
+        yield drive
+
+    def test_debug_execute_with_gdb_connected(self, test_drive, servers_available):
         """debug-execute should work when GDB client is connected.
 
         When GDB is connected, debug-execute should:
@@ -781,6 +751,9 @@ class TestDebugExecute:
         3. Type the command
         4. Return success (program will run and hit breakpoint)
         """
+        # Ensure test COM file exists
+        create_test_com_file()
+
         # Connect GDB first
         with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
             # Verify GDB is connected
@@ -789,35 +762,54 @@ class TestDebugExecute:
 
             # Ensure emulator is running
             try:
-                if hasattr(qmp, 'cont'):
-                    qmp.cont()
-                else:
-                    qmp._send_command("cont")
-                    qmp._receive_response()
+                qmp_raw_command("cont")
             except Exception:
                 pass
 
             time.sleep(0.2)
 
-            # Try debug-execute (may fail if test file not accessible)
+            # Change to test drive first using send-key (type_text doesn't handle ':')
+            # Use QMPClient for keyboard input
+            with QMPClient(host=QMP_HOST, port=QMP_PORT) as qmp:
+                qmp.send_key([test_drive.lower()])  # Letter
+                qmp.send_key(["shift", "semicolon"])  # Colon
+                time.sleep(0.1)
+                qmp.send_key(["ret"])
+                time.sleep(0.3)
+
+            # Use debug-execute with the test COM file (separate connection)
             try:
-                qmp._send_command("debug-execute", {"command": "DIR"})
-                response = qmp._receive_response()
+                response = qmp_raw_command("debug-execute", {"command": "DBXTEST.COM"})
 
                 if 'error' in response:
                     error = response.get('error', {})
                     print(f"\ndebug-execute error: {error.get('desc', error)}")
+                    pytest.fail(f"debug-execute failed: {error.get('desc', error)}")
                 else:
-                    print("\ndebug-execute succeeded")
-                    # Wait for command to start
-                    time.sleep(0.5)
+                    print("\ndebug-execute command accepted")
+                    # Wait for command to execute and hit breakpoint
+                    time.sleep(1.0)
 
                     # The program should hit breakpoint and pause for GDB
-                    # Note: DIR is a built-in command, so it may not hit
-                    # the entry breakpoint in the same way as an external program
+                    # Read registers to verify we're paused at entry point
+                    regs_after = gdb.read_registers()
+                    assert regs_after is not None, "Failed to read registers after debug-execute"
+
+                    eip = regs_after['eip']
+                    eip_offset = eip & 0xFFFF
+
+                    # COM entry point should be at offset 0x100
+                    print(f"EIP after debug-execute: 0x{eip:08X} (offset: 0x{eip_offset:04X})")
+
+                    # Verify we're at or near the entry point
+                    assert eip_offset in (0x100, 0x101, 0x102), (
+                        f"Expected EIP offset ~0x100 for COM entry point, "
+                        f"got 0x{eip_offset:04X}"
+                    )
 
             except Exception as e:
                 print(f"\ndebug-execute exception: {e}")
+                raise
 
 
 class TestRemoteDebugIntegration:
@@ -836,33 +828,17 @@ class TestRemoteDebugIntegration:
 
     def test_qmp_stop_reflects_in_gdb(self, servers_available):
         """Pausing via QMP stop should be visible to GDB."""
-        with QMPClient(host=QMP_HOST, port=QMP_PORT) as qmp:
-            # Stop via QMP
-            try:
-                if hasattr(qmp, 'stop'):
-                    qmp.stop()
-                else:
-                    qmp._send_command("stop")
-                    qmp._receive_response()
-            except Exception:
-                pytest.skip("QMP stop command not available")
+        # Stop via QMP
+        qmp_raw_command("stop")
+        time.sleep(0.2)
 
-            time.sleep(0.2)
+        # GDB should be able to read registers (implies paused or pauseable)
+        with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
+            regs = gdb.read_registers()
+            assert regs is not None
 
-            # GDB should be able to read registers (implies paused or pauseable)
-            with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
-                regs = gdb.read_registers()
-                assert regs is not None
-
-            # Resume via QMP
-            try:
-                if hasattr(qmp, 'cont'):
-                    qmp.cont()
-                else:
-                    qmp._send_command("cont")
-                    qmp._receive_response()
-            except Exception:
-                pass
+        # Resume via QMP
+        qmp_raw_command("cont")
 
     def test_gdb_registers_valid_during_pause(self, servers_available):
         """Register values should be valid and consistent when paused."""
