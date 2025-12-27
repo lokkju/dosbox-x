@@ -425,6 +425,8 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_system_reset(cmd);
     } else if (execute == "query-status") {
         handle_query_status();
+    } else if (execute == "debug-break-on-exec") {
+        handle_debug_break_on_exec(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -453,7 +455,8 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"loadstate\"},"
         "{\"name\": \"stop\"},"
         "{\"name\": \"cont\"},"
-        "{\"name\": \"system_reset\"}"
+        "{\"name\": \"system_reset\"},"
+        "{\"name\": \"debug-break-on-exec\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -1003,6 +1006,42 @@ void QMPServer::handle_query_status() {
         response << ", \"reason\": \"" << debug_reason << "\"";
     }
     response << "}}}\r\n";
+    send_response(response.str());
+}
+
+void QMPServer::handle_debug_break_on_exec(const std::string& cmd) {
+    // Set or clear the break-on-exec flag for debugging program entry points
+    // When enabled, the debugger will break at the entry point of the next
+    // program executed via DOS
+
+    // Extract arguments
+    std::string args_str;
+    size_t args_pos = cmd.find("\"arguments\"");
+    if (args_pos != std::string::npos) {
+        size_t brace = cmd.find("{", args_pos);
+        if (brace != std::string::npos) {
+            int depth = 1;
+            size_t end = brace + 1;
+            while (end < cmd.size() && depth > 0) {
+                if (cmd[end] == '{') depth++;
+                else if (cmd[end] == '}') depth--;
+                end++;
+            }
+            args_str = cmd.substr(brace, end - brace);
+        }
+    }
+
+    // Get the enabled flag (defaults to true if not specified)
+    bool enabled = extract_bool(args_str, "enabled", true);
+
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: debug-break-on-exec enabled=%s", enabled ? "true" : "false");
+
+    // Set the flag in the debugger
+    DEBUG_SetGDBBreakOnExec(enabled);
+
+    // Return current state
+    std::ostringstream response;
+    response << "{\"return\": {\"enabled\": " << (enabled ? "true" : "false") << "}}\r\n";
     send_response(response.str());
 }
 
