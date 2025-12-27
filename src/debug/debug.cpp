@@ -30,7 +30,6 @@
 #include <iomanip>
 #include <string>
 #include <sstream>
-#include <thread>
 using namespace std;
 
 #include "debug.h"
@@ -4297,15 +4296,10 @@ extern "C" INPUT_RECORD * _pdcurses_hax_inputrecord(void);
  *      emulator time used everywhere else in this code,
  *      specifically PIC_TickIndex() and PIC_FullIndex(). */
 int32_t DEBUG_Run(int32_t amount,bool quickexit) {
-	bool isHLT = CPU_IsHLTed();
-	LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_Run: amount=%d, CPU_Cycles=%d, CPU_CycleLeft=%d, HLT=%d",
-		amount, CPU_Cycles, CPU_CycleLeft, isHLT);
 	skipFirstInstruction = true;
 	CPU_CycleLeft += CPU_Cycles - amount;
 	CPU_Cycles = amount;
 	int32_t ret = (int32_t)(*cpudecoder)();
-	LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_Run: after cpudecoder, ret=%d, CPU_Cycles=%d, HLT=%d",
-		ret, CPU_Cycles, CPU_IsHLTed());
 	if (quickexit) SetCodeWinStart();
 	else {
 		// ensure all breakpoints are activated
