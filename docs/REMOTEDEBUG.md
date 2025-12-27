@@ -135,11 +135,85 @@ Explicit key press/release control:
 }}
 ```
 
+#### Mouse Events (input-send-event)
+
+Mouse movement and button clicks:
+
+```json
+{"execute": "input-send-event", "arguments": {
+  "events": [
+    {"type": "rel", "data": {"axis": "x", "value": 50}},
+    {"type": "rel", "data": {"axis": "y", "value": -30}},
+    {"type": "btn", "data": {"button": "left", "down": true}},
+    {"type": "btn", "data": {"button": "left", "down": false}}
+  ]
+}}
+```
+
+- `type: "rel"` - Relative mouse movement (`axis`: `x`/`y`, `value`: pixels)
+- `type: "btn"` - Mouse button (`button`: `left`/`right`/`middle`, `down`: true/false)
+
+#### debug-break-on-exec
+
+Enable breakpoint on program entry for GDB debugging:
+
+```json
+{"execute": "debug-break-on-exec", "arguments": {"enabled": true}}
+```
+
+When enabled, DOSBox-X will automatically set a breakpoint when DOS loads an EXE/COM program. If a GDB client is connected, it receives the S05 (SIGTRAP) notification at the program entry point.
+
+Response: `{"return": {"enabled": true}}`
+
 ### Key Names (QKeyCode)
 
 Standard QEMU key names: `a`-`z`, `0`-`9`, `f1`-`f12`, `ret`, `esc`, `tab`, `spc`, `shift`, `ctrl`, `alt`, `caps_lock`, `left`, `right`, `up`, `down`, `insert`, `delete`, `home`, `end`, `pgup`, `pgdn`, `kp_0`-`kp_9`, etc.
 
 See [QEMU QKeyCode](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) for full list.
+
+---
+
+## Debugging Program Entry Points
+
+There are two approaches for setting breakpoints at a program's entry point:
+
+### Option 1: Using DEBUGBOX (External Tool)
+
+[DEBUGBOX](https://pypi.org/project/dbxdebug/) is a Python library that orchestrates the QMP and GDB servers:
+
+```python
+from dbxdebug import DOSBoxDebugger
+
+debugger = DOSBoxDebugger()
+debugger.run_program("C:\\MYGAME.EXE")  # Types command, sets break-on-exec, waits for GDB
+```
+
+### Option 2: Using QMP debug-break-on-exec
+
+For manual or custom automation:
+
+1. Connect GDB to DOSBox-X:
+   ```bash
+   gdb
+   (gdb) target remote localhost:2159
+   ```
+
+2. Enable break-on-exec via QMP:
+   ```bash
+   echo '{"execute": "qmp_capabilities"}' | nc localhost 4444
+   echo '{"execute": "debug-break-on-exec", "arguments": {"enabled": true}}' | nc localhost 4444
+   ```
+
+3. Type the program name at the DOS prompt using QMP send-key:
+   ```bash
+   # Type "GAME.EXE" followed by Enter
+   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "shift"}, {"type": "qcode", "data": "g"}]}}' | nc localhost 4444
+   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "a"}]}}' | nc localhost 4444
+   # ... type remaining characters ...
+   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "ret"}]}}' | nc localhost 4444
+   ```
+
+4. When the program starts, GDB receives the breakpoint notification.
 
 ---
 
@@ -184,6 +258,7 @@ uv run tests/integration/run_all.py -x           # Stop on first failure
 |-------|----------|
 | `test_gdb_server.py` | Connection, registers, memory, breakpoints, execution control |
 | `test_qmp_server.py` | Connection, send-key, input-send-event, type_text, key codes |
+| `test_debugbox.py` | GDB pause states, step/continue, breakpoints, debug-break-on-exec |
 | `test_video_tools.py` | Screen capture, raw video memory, timer, VGA attributes |
 
 See `tests/integration/README.md` for detailed documentation.
@@ -194,4 +269,3 @@ See `tests/integration/README.md` for detailed documentation.
 
 - [ ] Windows support (currently POSIX sockets only)
 - [ ] Hardware breakpoints/watchpoints for GDB server
-- [ ] Mouse input support for QMP server
