@@ -1047,20 +1047,39 @@ void QMPServer::handle_debug_execute(const std::string& cmd) {
     // Set the GDB break-on-exec flag
     DEBUG_SetGDBBreakOnExec(true);
 
+    // Ensure modifier keys are released before typing
+    KEYBOARD_AddKey(KBD_leftshift, false);
+    KEYBOARD_AddKey(KBD_rightshift, false);
+    KEYBOARD_AddKey(KBD_leftctrl, false);
+    KEYBOARD_AddKey(KBD_rightctrl, false);
+    KEYBOARD_AddKey(KBD_leftalt, false);
+    KEYBOARD_AddKey(KBD_rightalt, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
     // Type the command followed by Enter
     // This simulates typing the command at the DOS prompt
+
+    // Character to KBD_KEYS mapping (KBD enum is in QWERTY order, not alphabetical!)
+    static const KBD_KEYS char_to_kbd[26] = {
+        KBD_a, KBD_b, KBD_c, KBD_d, KBD_e, KBD_f, KBD_g, KBD_h, KBD_i, KBD_j,
+        KBD_k, KBD_l, KBD_m, KBD_n, KBD_o, KBD_p, KBD_q, KBD_r, KBD_s, KBD_t,
+        KBD_u, KBD_v, KBD_w, KBD_x, KBD_y, KBD_z
+    };
+
     for (char c : command) {
         KBD_KEYS key = KBD_NONE;
         bool need_shift = false;
 
-        // Map ASCII to keyboard keys (simplified - handles basic chars)
+        // Map ASCII to keyboard keys
         if (c >= 'a' && c <= 'z') {
-            key = static_cast<KBD_KEYS>(KBD_a + (c - 'a'));
+            key = char_to_kbd[c - 'a'];
         } else if (c >= 'A' && c <= 'Z') {
-            key = static_cast<KBD_KEYS>(KBD_a + (c - 'A'));
+            key = char_to_kbd[c - 'A'];
             need_shift = true;
         } else if (c >= '0' && c <= '9') {
-            key = static_cast<KBD_KEYS>(KBD_0 + (c - '0'));
+            // Numbers ARE contiguous in the enum
+            key = static_cast<KBD_KEYS>(KBD_1 + (c - '1'));
+            if (c == '0') key = KBD_0;  // 0 comes after 9 in enum
         } else if (c == ' ') {
             key = KBD_space;
         } else if (c == '.') {
@@ -1080,18 +1099,25 @@ void QMPServer::handle_debug_execute(const std::string& cmd) {
         }
 
         if (key != KBD_NONE) {
-            if (need_shift) KEYBOARD_AddKey(KBD_leftshift, true);
+            if (need_shift) {
+                KEYBOARD_AddKey(KBD_leftshift, true);
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
             KEYBOARD_AddKey(key, true);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             KEYBOARD_AddKey(key, false);
-            if (need_shift) KEYBOARD_AddKey(KBD_leftshift, false);
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (need_shift) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                KEYBOARD_AddKey(KBD_leftshift, false);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(30));
         }
     }
 
     // Press Enter to execute the command
-    KEYBOARD_AddKey(KBD_enter, true);
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    KEYBOARD_AddKey(KBD_enter, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
     KEYBOARD_AddKey(KBD_enter, false);
 
     // Return success - GDB client will see the pause when breakpoint is hit
