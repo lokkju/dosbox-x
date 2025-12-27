@@ -178,6 +178,7 @@ static void LogBIOSMem(void);
 #if C_REMOTEDEBUG
 static GDBServer* gdbServer = nullptr;
 static bool gdb_break_on_exec = false;  // Flag for GDB-aware program execution
+static bool gdb_cpu_paused = false;     // CPU paused waiting for GDB command
 #endif
 
 extern int debuggerrun;
@@ -4938,21 +4939,13 @@ void DEBUG_Enable_Handler(bool pressed) {
         if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
             // If GDB server has a client, signal the breakpoint and pause for GDB
             // without entering the debugger UI - GDB client is in control
-            if (gdbServer->get_pending_command() == GDBCommand::CONTINUE) {
-                // Complete the continue command that was waiting for a breakpoint
-                LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit during GDB continue");
-                gdbServer->set_pause();  // Pause CPU for GDB
-                gdbServer->complete_command();
-            } else {
-                // Async breakpoint (Ctrl+C, DEBUGBOX, or debug-execute)
-                LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Async breakpoint - pausing for GDB");
-                gdbServer->set_pause();  // Pause CPU for GDB
-                gdbServer->signal_breakpoint();
-            }
+            LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit - signaling to GDB client");
+            gdbServer->send_stop_reply(5);  // SIGTRAP
             // Clear the GDB break on exec flag if it was set
             if (gdb_break_on_exec) {
                 gdb_break_on_exec = false;
             }
+            // TODO(DBX-jqn): Need to pause CPU until GDB sends continue/step
             return;  // Don't enter debugger UI
         }
 #endif
@@ -6204,61 +6197,60 @@ uint32_t DEBUG_GetRegister(int reg) {
 
 #if C_REMOTEDEBUG
  // Called by the main loop to check and handle GDB step/continue requests
- // Returns true if a step was executed (caller should return from loop)
+ // Returns true if CPU should be paused (caller should return from loop)
+ // NOTE: This is a stub for DBX-ck9. Full integration happens in DBX-jqn.
  bool DEBUG_CheckGDBStep() {
-    static int call_count = 0;
     if (gdbServer == nullptr || !gdbServer->is_running()) {
         return false;
     }
 
-    // If paused waiting for GDB command and client is connected, don't execute anything
-    if (gdbServer->is_paused() && gdbServer->has_client()) {
-        return true;  // Prevent CPU execution
-    }
+    // Poll for incoming GDB commands (non-blocking)
+    GDBAction action = gdbServer->poll();
 
-    GDBCommand cmd = gdbServer->get_pending_command();
-    if (cmd == GDBCommand::NONE) {
-        return false;
-    }
+    switch (action) {
+        case GDBAction::STEP: {
+            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: GDB step request");
+            uint32_t eip_before = DEBUG_GetRegister(8);
 
-    LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG_CheckGDBStep: cmd=%d (call #%d)", (int)cmd, ++call_count);
+            // If CPU is in HLT state, force exit from it
+            if (CPU_IsHLTed()) {
+                CPU_ExitHLT();
+            }
 
-    if (cmd == GDBCommand::STEP) {
-        uint32_t eip_before = DEBUG_GetRegister(8);  // EIP is register 8
-        bool was_halted = CPU_IsHLTed();
-        LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Executing GDB step at EIP=0x%X (HLT=%d)", eip_before, was_halted);
+            // Execute exactly one instruction
+            skipFirstInstruction = true;
+            mustCompleteInstruction = true;
+            DEBUG_Run(1, true);
+            mustCompleteInstruction = false;
 
-        // If CPU is in HLT state, force exit from it
-        // HLT is just waiting for an interrupt, so we skip past it
-        if (was_halted) {
-            CPU_ExitHLT();
-            uint32_t eip_after_exit = DEBUG_GetRegister(8);
-            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Exited HLT, EIP now 0x%X", eip_after_exit);
+            uint32_t eip_after = DEBUG_GetRegister(8);
+            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Step completed, EIP=0x%X->0x%X", eip_before, eip_after);
+
+            // Send stop reply to GDB
+            gdbServer->send_stop_reply(5);  // SIGTRAP
+            gdb_cpu_paused = true;
+            return true;  // CPU should pause
         }
 
-        // Execute exactly one instruction
-        skipFirstInstruction = true;
-        mustCompleteInstruction = true;
-        int32_t ret = DEBUG_Run(1, true);
-        mustCompleteInstruction = false;
-        uint32_t eip_after = DEBUG_GetRegister(8);
-        LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Step completed, ret=%d, EIP=0x%X->0x%X (HLT=%d)",
-            ret, eip_before, eip_after, CPU_IsHLTed());
-        // Pause CPU until next GDB command arrives
-        gdbServer->set_pause();
-        // Signal completion to GDB server thread
-        gdbServer->complete_command();
-        return true;  // Caller should return from loop iteration
-    } else if (cmd == GDBCommand::CONTINUE) {
-        LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Processing GDB continue request - starting execution");
-        // For continue, enable breakpoints and let normal execution proceed
-        // DON'T call complete_command() here - the breakpoint handler will signal
-        // completion when a breakpoint is hit (in DEBUG_EnableDebugger)
-        CBreakpoint::ActivateBreakpoints();
-        return false;  // Continue normal execution
-    }
+        case GDBAction::CONTINUE:
+            LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: GDB continue request");
+            CBreakpoint::ActivateBreakpoints();
+            gdb_cpu_paused = false;
+            return false;  // Continue normal execution
 
-    return false;
+        case GDBAction::DISCONNECT:
+            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: GDB client disconnected");
+            gdb_cpu_paused = false;
+            return false;
+
+        case GDBAction::NONE:
+        default:
+            // If paused waiting for GDB command, keep paused
+            if (gdb_cpu_paused && gdbServer->has_client()) {
+                return true;
+            }
+            return false;
+    }
  }
 #endif
 
@@ -6338,18 +6330,22 @@ uint32_t DEBUG_GetRegister(int reg) {
      // Check if CPU is paused for any debugging reason
      // Interactive debugger: debugging=true && !debug_running
      if (debugging && !debug_running) return true;
-     // GDB server: paused_for_gdb
-     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->is_paused()) {
+#if C_REMOTEDEBUG
+     // GDB server: check local gdb_cpu_paused flag
+     if (gdbServer != nullptr && gdbServer->is_running() && gdb_cpu_paused) {
          return true;
      }
+#endif
      return false;
  }
 
  const char* DEBUG_GetDebuggerPauseReason() {
      // Return the reason for debug pause, or nullptr if not paused
-     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->is_paused()) {
+#if C_REMOTEDEBUG
+     if (gdbServer != nullptr && gdbServer->is_running() && gdb_cpu_paused) {
          return "gdb";
      }
+#endif
      if (debugging && !debug_running) {
          // Could be breakpoint, step, or user-initiated
          // For now, just return "breakpoint" as that's the most common case
