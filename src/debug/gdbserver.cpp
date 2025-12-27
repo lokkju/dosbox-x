@@ -123,6 +123,17 @@
  void GDBServer::handle_client() {
      LOG(LOG_REMOTE, LOG_DEBUG)("GDBServer: Handling client");
 
+     // Check for mutual exclusion with interactive debugger
+     if (DEBUG_IsInteractiveDebuggerActive()) {
+         LOG(LOG_REMOTE, LOG_WARN)("GDBServer: Rejecting connection - interactive debugger is active");
+         // Send error packet and close
+         const char* error_msg = "$E99#b2";  // Error 99 = debugger conflict
+         send(client_fd, error_msg, strlen(error_msg), 0);
+         close(client_fd);
+         client_fd = -1;
+         return;
+     }
+
      // Reset state for new client
      noack_mode = false;
      paused_for_gdb.store(false);  // Clear pause state from previous session

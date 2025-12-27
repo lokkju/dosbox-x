@@ -425,6 +425,8 @@ void QMPServer::process_command(const std::string& cmd) {
         handle_system_reset(cmd);
     } else if (execute == "query-status") {
         handle_query_status();
+    } else if (execute == "debug-execute") {
+        handle_debug_execute(cmd);
     } else if (execute == "quit" || execute == "system_powerdown") {
         send_success();
         // Don't actually quit DOSBox, just acknowledge
@@ -453,7 +455,8 @@ void QMPServer::handle_query_commands() {
         "{\"name\": \"loadstate\"},"
         "{\"name\": \"stop\"},"
         "{\"name\": \"cont\"},"
-        "{\"name\": \"system_reset\"}"
+        "{\"name\": \"system_reset\"},"
+        "{\"name\": \"debug-execute\"}"
     "]}\r\n";
     send_response(response);
 }
@@ -981,10 +984,119 @@ void QMPServer::handle_system_reset(const std::string& cmd) {
 }
 
 void QMPServer::handle_query_status() {
-    std::string status = EMULATOR_IsPaused() ? "paused" : "running";
+    // Report both emulator state and debugger state separately
+    bool emu_paused = EMULATOR_IsPaused();
+    bool debug_active = DEBUG_IsDebuggerActive();
+    bool debug_paused = DEBUG_IsCpuPausedForDebug();
+    const char* debug_reason = DEBUG_GetDebuggerPauseReason();
+
+    // Overall status: paused if either emulator or debugger has paused CPU
+    std::string status = (emu_paused || debug_paused) ? "paused" : "running";
+    bool running = !(emu_paused || debug_paused);
+
     std::ostringstream response;
-    response << "{\"return\": {\"status\": \"" << status << "\", \"running\": "
-             << (EMULATOR_IsPaused() ? "false" : "true") << "}}\r\n";
+    response << "{\"return\": {"
+             << "\"status\": \"" << status << "\", "
+             << "\"running\": " << (running ? "true" : "false") << ", "
+             << "\"emulator-paused\": " << (emu_paused ? "true" : "false") << ", "
+             << "\"debug\": {"
+             << "\"active\": " << (debug_active ? "true" : "false") << ", "
+             << "\"paused\": " << (debug_paused ? "true" : "false");
+    if (debug_reason) {
+        response << ", \"reason\": \"" << debug_reason << "\"";
+    }
+    response << "}}}\r\n";
+    send_response(response.str());
+}
+
+void QMPServer::handle_debug_execute(const std::string& cmd) {
+    // Execute a DOS command with breakpoint at entry for GDB debugging
+    // Requires GDB client to be connected
+
+    // Check if GDB client is connected
+    if (!DEBUG_IsGDBClientConnected()) {
+        send_error("GenericError", "No GDB client connected. Connect GDB first, then use debug-execute.");
+        return;
+    }
+
+    // Extract command argument
+    std::string args_str;
+    size_t args_pos = cmd.find("\"arguments\"");
+    if (args_pos != std::string::npos) {
+        size_t brace = cmd.find("{", args_pos);
+        if (brace != std::string::npos) {
+            int depth = 1;
+            size_t end = brace + 1;
+            while (end < cmd.size() && depth > 0) {
+                if (cmd[end] == '{') depth++;
+                else if (cmd[end] == '}') depth--;
+                end++;
+            }
+            args_str = cmd.substr(brace, end - brace);
+        }
+    }
+
+    std::string command = extract_string(args_str, "command");
+    if (command.empty()) {
+        send_error("GenericError", "Missing required 'command' argument");
+        return;
+    }
+
+    LOG(LOG_REMOTE, LOG_NORMAL)("QMP: debug-execute command='%s'", command.c_str());
+
+    // Set the GDB break-on-exec flag
+    DEBUG_SetGDBBreakOnExec(true);
+
+    // Type the command followed by Enter
+    // This simulates typing the command at the DOS prompt
+    for (char c : command) {
+        KBD_KEYS key = KBD_NONE;
+        bool need_shift = false;
+
+        // Map ASCII to keyboard keys (simplified - handles basic chars)
+        if (c >= 'a' && c <= 'z') {
+            key = static_cast<KBD_KEYS>(KBD_a + (c - 'a'));
+        } else if (c >= 'A' && c <= 'Z') {
+            key = static_cast<KBD_KEYS>(KBD_a + (c - 'A'));
+            need_shift = true;
+        } else if (c >= '0' && c <= '9') {
+            key = static_cast<KBD_KEYS>(KBD_0 + (c - '0'));
+        } else if (c == ' ') {
+            key = KBD_space;
+        } else if (c == '.') {
+            key = KBD_period;
+        } else if (c == ':') {
+            key = KBD_semicolon;
+            need_shift = true;
+        } else if (c == '\\') {
+            key = KBD_backslash;
+        } else if (c == '/') {
+            key = KBD_slash;
+        } else if (c == '-') {
+            key = KBD_minus;
+        } else if (c == '_') {
+            key = KBD_minus;
+            need_shift = true;
+        }
+
+        if (key != KBD_NONE) {
+            if (need_shift) KEYBOARD_AddKey(KBD_leftshift, true);
+            KEYBOARD_AddKey(key, true);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            KEYBOARD_AddKey(key, false);
+            if (need_shift) KEYBOARD_AddKey(KBD_leftshift, false);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+
+    // Press Enter to execute the command
+    KEYBOARD_AddKey(KBD_enter, true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    KEYBOARD_AddKey(KBD_enter, false);
+
+    // Return success - GDB client will see the pause when breakpoint is hit
+    std::ostringstream response;
+    response << "{\"return\": {\"command\": \"" << command << "\", \"status\": \"executing\"}}\r\n";
     send_response(response.str());
 }
 

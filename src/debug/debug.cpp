@@ -177,6 +177,7 @@ static void LogBIOSMem(void);
 
 #if C_REMOTEDEBUG
 static GDBServer* gdbServer = nullptr;
+static bool gdb_break_on_exec = false;  // Flag for GDB-aware program execution
 #endif
 
 extern int debuggerrun;
@@ -4845,6 +4846,16 @@ void DEBUG_Enable_Handler(bool pressed) {
 	if (!pressed || control->opt_display2)
 		return;
 
+#if C_REMOTEDEBUG
+    // Check for mutual exclusion with GDB client
+    if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
+        LOG(LOG_REMOTE, LOG_WARN)("DEBUG: Interactive debugger blocked - GDB client is connected");
+        DEBUG_ShowMsg("Interactive debugger unavailable: GDB client is connected.\n");
+        DEBUG_ShowMsg("Disconnect GDB client first, or use GDB for debugging.\n");
+        return;
+    }
+#endif
+
     if (hidedebugger) {
         hidedebugger=false;
 #if defined(WIN32) && !defined(_WIN32_WINDOWS)
@@ -4923,16 +4934,24 @@ void DEBUG_Enable_Handler(bool pressed) {
     if (!debugging) {
         printf("Breakpoint hit! Entering debugger.\n");
 #if C_REMOTEDEBUG
-        if (gdbServer != nullptr && gdbServer->is_running()) {
-            // If GDB server is running, signal the breakpoint and return
+        // Check if GDB client is connected - if so, GDB takes control
+        if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
+            // If GDB server has a client, signal the breakpoint and pause for GDB
             // without entering the debugger UI - GDB client is in control
             if (gdbServer->get_pending_command() == GDBCommand::CONTINUE) {
                 // Complete the continue command that was waiting for a breakpoint
                 LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit during GDB continue");
+                gdbServer->set_pause();  // Pause CPU for GDB
                 gdbServer->complete_command();
             } else {
-                // Async breakpoint (Ctrl+C or similar)
+                // Async breakpoint (Ctrl+C, DEBUGBOX, or debug-execute)
+                LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Async breakpoint - pausing for GDB");
+                gdbServer->set_pause();  // Pause CPU for GDB
                 gdbServer->signal_breakpoint();
+            }
+            // Clear the GDB break on exec flag if it was set
+            if (gdb_break_on_exec) {
+                gdb_break_on_exec = false;
             }
             return;  // Don't enter debugger UI
         }
@@ -5579,6 +5598,15 @@ void DEBUG_CheckExecuteBreakpoint(uint16_t seg, uint32_t off)
 		CBreakpoint::ActivateBreakpointsExceptAt(SegPhys(cs)+reg_eip);
         debugger_break_on_exec = false;
     }
+#if C_REMOTEDEBUG
+    // GDB-aware break on exec (from QMP debug-execute)
+    if (gdb_break_on_exec) {
+        LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: GDB break on exec at %04X:%08X", seg, off);
+		CBreakpoint::AddBreakpoint(seg,off,true);
+		CBreakpoint::ActivateBreakpointsExceptAt(SegPhys(cs)+reg_eip);
+        // Note: gdb_break_on_exec is cleared when breakpoint is hit
+    }
+#endif
 #endif
 #if 0
 	if (pDebugcom && pDebugcom->IsActive()) {
@@ -6295,6 +6323,56 @@ uint32_t DEBUG_GetRegister(int reg) {
      exitLoop = true;
      debugging = false;
      LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: Closing debugger UI");
+ }
+
+ bool DEBUG_IsDebuggerActive() {
+     // Check if any form of debugging is active
+     if (debugging) return true;
+     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
+         return true;
+     }
+     return false;
+ }
+
+ bool DEBUG_IsCpuPausedForDebug() {
+     // Check if CPU is paused for any debugging reason
+     // Interactive debugger: debugging=true && !debug_running
+     if (debugging && !debug_running) return true;
+     // GDB server: paused_for_gdb
+     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->is_paused()) {
+         return true;
+     }
+     return false;
+ }
+
+ const char* DEBUG_GetDebuggerPauseReason() {
+     // Return the reason for debug pause, or nullptr if not paused
+     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->is_paused()) {
+         return "gdb";
+     }
+     if (debugging && !debug_running) {
+         // Could be breakpoint, step, or user-initiated
+         // For now, just return "breakpoint" as that's the most common case
+         return "breakpoint";
+     }
+     return nullptr;
+ }
+
+ bool DEBUG_IsInteractiveDebuggerActive() {
+     return debugging;
+ }
+
+ bool DEBUG_IsGDBClientConnected() {
+     return gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client();
+ }
+
+ void DEBUG_SetGDBBreakOnExec(bool enable) {
+     gdb_break_on_exec = enable;
+     LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: GDB break on exec %s", enable ? "enabled" : "disabled");
+ }
+
+ bool DEBUG_IsGDBBreakOnExecPending() {
+     return gdb_break_on_exec;
  }
 #endif /* C_REMOTEDEBUG */
 

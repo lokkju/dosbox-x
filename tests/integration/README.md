@@ -71,6 +71,7 @@ uv run tests/integration/run_all.py --durations=10
 | `test_gdb_server.py` | GDB Remote Serial Protocol tests: connection, registers, memory, breakpoints, execution control |
 | `test_qmp_server.py` | QEMU Monitor Protocol tests: connection, send-key, input-send-event, type_text |
 | `test_video_tools.py` | Screen capture tests: screen dump, raw video memory, timer, VGA attributes |
+| `test_debugbox.py` | DEBUGBOX + remote debugging integration tests: pause states, entry point detection |
 | `run_all.py` | Test runner that checks server availability and runs all tests |
 
 ## Configuration
@@ -104,6 +105,12 @@ To use different ports, modify the constants at the top of each test file.
 - **Timer**: BIOS tick counter, timer advancement
 - **VGA attributes**: color decoding, blink bit
 
+### DEBUGBOX Integration Tests
+- **Basic**: DEBUGBOX command pauses emulator
+- **GDB integration**: GDB can connect during debug mode
+- **Pause states**: query-status, stop/cont commands
+- **Entry point**: Program breaks at entry (requires test COM file on mounted drive)
+
 ## Troubleshooting
 
 **Tests skip with "server not available"**
@@ -119,3 +126,9 @@ To use different ports, modify the constants at the top of each test file.
 **Tests hang**
 - DOSBox-X might be in a state waiting for input
 - Try pressing a key in DOSBox-X or restarting it
+
+**DEBUGBOX entry point tests skip**
+- These tests require the `assets/` directory to be accessible from within DOSBox-X
+- Mount the test assets directory as a drive in DOSBox-X
+- The test COM file (`DBXTEST.COM`) is created automatically in `tests/integration/assets/`
+- Example: Add `mount d: /path/to/dosbox-x/tests/integration/assets` to your config

@@ -47,6 +47,19 @@ void DEBUG_CloseDebugger();  // Close debugger UI and resume execution
 // Called by main loop to check and handle GDB step/continue requests
 // Returns true if a step was executed (caller should return from loop)
 bool DEBUG_CheckGDBStep();
+
+// Unified debug state queries for QMP/external tools
+bool DEBUG_IsDebuggerActive();   // Returns true if debugger (interactive or GDB) is active
+bool DEBUG_IsCpuPausedForDebug(); // Returns true if CPU is paused for debugging
+const char* DEBUG_GetDebuggerPauseReason(); // Returns reason: "gdb", "breakpoint", "step", "user", or nullptr
+
+// Mutual exclusion between GDB and interactive debugger
+bool DEBUG_IsInteractiveDebuggerActive(); // Returns true if interactive (curses) debugger is active
+bool DEBUG_IsGDBClientConnected();        // Returns true if GDB client is connected
+
+// GDB-aware program execution (for QMP debug-execute)
+void DEBUG_SetGDBBreakOnExec(bool enable); // Set flag to break at entry for GDB
+bool DEBUG_IsGDBBreakOnExecPending();      // Check if waiting for GDB break on exec
 #endif
 
 extern Bitu cycle_count;
