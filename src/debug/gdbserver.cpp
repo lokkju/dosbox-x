@@ -287,8 +287,9 @@ void GDBServer::send_stop_reply(int signal) {
 GDBAction GDBServer::process_command(const std::string& cmd) {
     // Handle Ctrl-C interrupt
     if (cmd == "\x03") {
+        LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Ctrl-C received, stopping CPU");
         send_stop_reply(5);  // SIGTRAP
-        return GDBAction::NONE;  // Already stopped, just acknowledge
+        return GDBAction::STOP;  // Tell debug.cpp to pause CPU
     }
 
     if (cmd == "QStartNoAckMode") {
@@ -297,8 +298,10 @@ GDBAction GDBServer::process_command(const std::string& cmd) {
     } else if (cmd == "vMustReplyEmpty") {
         send_packet("");
     } else if (cmd == "?") {
-        // Query halt reason
+        // Query halt reason - GDB wants us stopped
+        LOG(LOG_REMOTE, LOG_NORMAL)("GDBServer: Halt reason query, stopping CPU");
         send_stop_reply(5);  // SIGTRAP
+        return GDBAction::STOP;  // Tell debug.cpp to pause CPU
     } else if (cmd.substr(0, 1) == "H") {
         send_packet("OK");
     } else if (cmd.substr(0, 1) == "p") {

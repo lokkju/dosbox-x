@@ -4941,11 +4941,11 @@ void DEBUG_Enable_Handler(bool pressed) {
             // without entering the debugger UI - GDB client is in control
             LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit - signaling to GDB client");
             gdbServer->send_stop_reply(5);  // SIGTRAP
+            gdb_cpu_paused = true;  // Pause CPU until GDB sends continue/step
             // Clear the GDB break on exec flag if it was set
             if (gdb_break_on_exec) {
                 gdb_break_on_exec = false;
             }
-            // TODO(DBX-jqn): Need to pause CPU until GDB sends continue/step
             return;  // Don't enter debugger UI
         }
 #endif
@@ -6196,9 +6196,9 @@ uint32_t DEBUG_GetRegister(int reg) {
  }
 
 #if C_REMOTEDEBUG
- // Called by the main loop to check and handle GDB step/continue requests
- // Returns true if CPU should be paused (caller should return from loop)
- // NOTE: This is a stub for DBX-ck9. Full integration happens in DBX-jqn.
+ // Called by the main loop to check and handle GDB commands.
+ // Polls the GDB server (non-blocking) and processes any received commands.
+ // Returns true if CPU should be paused (caller should return from loop iteration).
  bool DEBUG_CheckGDBStep() {
     if (gdbServer == nullptr || !gdbServer->is_running()) {
         return false;
@@ -6237,6 +6237,11 @@ uint32_t DEBUG_GetRegister(int reg) {
             CBreakpoint::ActivateBreakpoints();
             gdb_cpu_paused = false;
             return false;  // Continue normal execution
+
+        case GDBAction::STOP:
+            LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: GDB stop request");
+            gdb_cpu_paused = true;
+            return true;  // CPU should pause
 
         case GDBAction::DISCONNECT:
             LOG(LOG_REMOTE, LOG_NORMAL)("DEBUG: GDB client disconnected");

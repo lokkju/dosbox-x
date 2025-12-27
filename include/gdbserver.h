@@ -20,6 +20,7 @@ enum class GDBAction {
     NONE,           // No action needed, continue polling
     STEP,           // Execute single step
     CONTINUE,       // Continue execution until breakpoint
+    STOP,           // GDB wants CPU stopped (halt reason query, Ctrl-C)
     DISCONNECT      // Client disconnected
 };
 
