@@ -53,6 +53,9 @@
 #include <unistd.h>
 #include "dosbox.h"
 #include "debug.h"
+#if C_REMOTEDEBUG
+#include "qmp.h"
+#endif
 #include "cpu.h"
 #include "logging.h"
 #include "menudef.h"
@@ -471,6 +474,8 @@ static Bitu Normal_Loop(void) {
             SAVESTATE_CheckPendingRequest();
             // Check for emulator control requests from QMP (pause/reset)
             EMULATOR_CheckPendingControl();
+            // Process pending QMP input events (keyboard, mouse) - thread-safe queue
+            QMP_ProcessPendingInputEvents();
 #endif
             if (PIC_RunQueue()) {
                 /* now is the time to check for the NMI (Non-maskable interrupt) */

@@ -461,9 +461,50 @@ void QMPServer::handle_query_commands() {
     send_response(response);
 }
 
+void QMPServer::queue_input_event(const QMPInputEvent& event) {
+    std::lock_guard<std::mutex> lock(input_queue_mutex);
+    input_queue.push(event);
+}
+
+void QMPServer::process_pending_input_events() {
+    // Process all queued events - this runs on the main thread
+    std::queue<QMPInputEvent> events_to_process;
+
+    {
+        std::lock_guard<std::mutex> lock(input_queue_mutex);
+        std::swap(events_to_process, input_queue);
+    }
+
+    while (!events_to_process.empty()) {
+        const QMPInputEvent& event = events_to_process.front();
+
+        switch (event.type) {
+            case QMPInputEventType::KeyPress:
+                KEYBOARD_AddKey(event.key, true);
+                break;
+            case QMPInputEventType::KeyRelease:
+                KEYBOARD_AddKey(event.key, false);
+                break;
+            case QMPInputEventType::MouseButtonPress:
+                Mouse_ButtonPressed(event.button);
+                break;
+            case QMPInputEventType::MouseButtonRelease:
+                Mouse_ButtonReleased(event.button);
+                break;
+            case QMPInputEventType::MouseMove:
+                Mouse_CursorMoved(event.move.x, event.move.y, 0, 0, true);
+                break;
+        }
+
+        events_to_process.pop();
+    }
+}
+
 void QMPServer::handle_send_key(const std::string& cmd) {
     // Extract hold-time (default 100ms per QEMU spec)
-    int hold_time = extract_int(cmd, "hold-time", 100);
+    // Note: hold-time is now handled by queuing press and release events
+    // The actual timing between press/release depends on main loop frequency
+    (void)extract_int(cmd, "hold-time", 100);  // Acknowledged but not used for blocking
 
     // Extract keys array
     std::vector<std::string> keys = extract_array(cmd, "keys");
@@ -488,17 +529,20 @@ void QMPServer::handle_send_key(const std::string& cmd) {
         }
     }
 
-    // Press all keys
+    // Queue key press events
     for (auto key : kbd_keys) {
-        KEYBOARD_AddKey(key, true);
+        QMPInputEvent event;
+        event.type = QMPInputEventType::KeyPress;
+        event.key = key;
+        queue_input_event(event);
     }
 
-    // Wait hold-time
-    std::this_thread::sleep_for(std::chrono::milliseconds(hold_time));
-
-    // Release all keys (reverse order)
+    // Queue key release events (reverse order)
     for (auto it = kbd_keys.rbegin(); it != kbd_keys.rend(); ++it) {
-        KEYBOARD_AddKey(*it, false);
+        QMPInputEvent event;
+        event.type = QMPInputEventType::KeyRelease;
+        event.key = *it;
+        queue_input_event(event);
     }
 
     send_success();
@@ -515,17 +559,17 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
     float mouse_xrel = 0, mouse_yrel = 0;
     bool has_mouse_move = false;
 
-    for (const auto& event : events) {
-        std::string type = extract_string(event, "type");
+    for (const auto& event_json : events) {
+        std::string type = extract_string(event_json, "type");
 
         // Find the data object - it's nested
-        size_t data_pos = event.find("\"data\"");
+        size_t data_pos = event_json.find("\"data\"");
         if (data_pos == std::string::npos) continue;
 
-        size_t data_start = event.find("{", data_pos);
+        size_t data_start = event_json.find("{", data_pos);
         if (data_start == std::string::npos) continue;
 
-        std::string data_str = event.substr(data_start);
+        std::string data_str = event_json.substr(data_start);
 
         if (type == "key") {
             // Keyboard event
@@ -545,7 +589,10 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
             if (key_type == "qcode" && !key_data.empty()) {
                 KBD_KEYS kbd = qcode_to_kbd(key_data);
                 if (kbd != KBD_NONE) {
-                    KEYBOARD_AddKey(kbd, down);
+                    QMPInputEvent input_event;
+                    input_event.type = down ? QMPInputEventType::KeyPress : QMPInputEventType::KeyRelease;
+                    input_event.key = kbd;
+                    queue_input_event(input_event);
                 } else {
                     LOG(LOG_REMOTE, LOG_WARN)("QMP: Unknown qcode: %s", key_data.c_str());
                 }
@@ -579,17 +626,20 @@ void QMPServer::handle_input_send_event(const std::string& cmd) {
                 continue;
             }
 
-            if (down) {
-                Mouse_ButtonPressed(btn_id);
-            } else {
-                Mouse_ButtonReleased(btn_id);
-            }
+            QMPInputEvent input_event;
+            input_event.type = down ? QMPInputEventType::MouseButtonPress : QMPInputEventType::MouseButtonRelease;
+            input_event.button = btn_id;
+            queue_input_event(input_event);
         }
     }
 
-    // Apply accumulated mouse movement
+    // Queue accumulated mouse movement as a single event
     if (has_mouse_move) {
-        Mouse_CursorMoved(mouse_xrel, mouse_yrel, 0, 0, true);
+        QMPInputEvent input_event;
+        input_event.type = QMPInputEventType::MouseMove;
+        input_event.move.x = mouse_xrel;
+        input_event.move.y = mouse_yrel;
+        queue_input_event(input_event);
     }
 
     send_success();
@@ -1066,6 +1116,12 @@ void QMP_StopServer() {
 
 bool QMP_IsServerRunning() {
     return qmpServer != nullptr && qmpServer->is_running();
+}
+
+void QMP_ProcessPendingInputEvents() {
+    if (qmpServer != nullptr) {
+        qmpServer->process_pending_input_events();
+    }
 }
 
 #endif /* C_REMOTEDEBUG */

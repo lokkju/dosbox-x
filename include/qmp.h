@@ -28,6 +28,8 @@
 #include <map>
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <queue>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -39,6 +41,26 @@
 // QMP Server - QEMU Monitor Protocol compatible server for keyboard input
 // Implements a subset of QMP focused on send-key and input-send-event commands
 
+// Input event types for thread-safe queuing
+enum class QMPInputEventType {
+    KeyPress,
+    KeyRelease,
+    MouseButtonPress,
+    MouseButtonRelease,
+    MouseMove
+};
+
+struct QMPInputEvent {
+    QMPInputEventType type;
+    union {
+        KBD_KEYS key;        // For keyboard events
+        uint8_t button;      // For mouse button events
+        struct {
+            float x, y;      // For mouse move events
+        } move;
+    };
+};
+
 class QMPServer {
 public:
     QMPServer(int port) : port(port), server_fd(-1), client_fd(-1), running(false) {}
@@ -49,11 +71,21 @@ public:
     void stop();   // Stop server and wait for thread to exit
     bool is_running() const { return running.load(); }
 
+    // Process pending input events (called from main thread)
+    void process_pending_input_events();
+
 private:
     int port;
     int server_fd, client_fd;
     std::atomic<bool> running{false};
     std::thread server_thread;
+
+    // Thread-safe input event queue
+    std::mutex input_queue_mutex;
+    std::queue<QMPInputEvent> input_queue;
+
+    // Queue an input event for processing on the main thread
+    void queue_input_event(const QMPInputEvent& event);
 
     // Socket operations
     void setup_socket();
@@ -98,6 +130,7 @@ private:
 void QMP_StartServer(int port);
 void QMP_StopServer();
 bool QMP_IsServerRunning();
+void QMP_ProcessPendingInputEvents();
 
 #endif /* C_REMOTEDEBUG */
 
