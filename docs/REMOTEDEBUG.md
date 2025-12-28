@@ -175,45 +175,157 @@ See [QEMU QKeyCode](https://www.qemu.org/docs/master/interop/qemu-qmp-ref.html) 
 
 ## Debugging Program Entry Points
 
-There are two approaches for setting breakpoints at a program's entry point:
+There are two approaches for setting breakpoints at a program's entry point.
 
-### Option 1: Using DEBUGBOX (External Tool)
+### Entry Point Addresses
 
-[DEBUGBOX](https://pypi.org/project/dbxdebug/) is a Python library that orchestrates the QMP and GDB servers:
+When a breakpoint is hit at program entry:
+- **EXE files**: CS:IP points to segment:0000 (entry at start of code segment)
+- **COM files**: CS:IP points to segment:0100 (code starts after 256-byte PSP)
 
-```python
-from dbxdebug import DOSBoxDebugger
+The segment address varies based on available memory. Use `offset = EIP - (CS * 16)` to calculate the offset within the segment.
 
-debugger = DOSBoxDebugger()
-debugger.run_program("C:\\MYGAME.EXE")  # Types command, sets break-on-exec, waits for GDB
+### Option 1: DEBUGBOX Shell Command
+
+The built-in `DEBUGBOX` command sets a breakpoint at program entry:
+
+```
+C:\> DEBUGBOX MYGAME.EXE
 ```
 
-### Option 2: Using QMP debug-break-on-exec
+**Important**: A GDB client must be connected BEFORE running DEBUGBOX to receive the breakpoint notification (S05/SIGTRAP).
 
-For manual or custom automation:
+#### Example with GDB
 
-1. Connect GDB to DOSBox-X:
-   ```bash
-   gdb
-   (gdb) target remote localhost:2159
-   ```
+Terminal 1 - Connect GDB first:
+```bash
+gdb
+(gdb) target remote localhost:2159
+```
 
-2. Enable break-on-exec via QMP:
-   ```bash
-   echo '{"execute": "qmp_capabilities"}' | nc localhost 4444
-   echo '{"execute": "debug-break-on-exec", "arguments": {"enabled": true}}' | nc localhost 4444
-   ```
+Terminal 2 - Type DEBUGBOX command via QMP:
+```bash
+# Initialize QMP
+echo '{"execute": "qmp_capabilities"}' | nc localhost 4444
 
-3. Type the program name at the DOS prompt using QMP send-key:
-   ```bash
-   # Type "GAME.EXE" followed by Enter
-   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "shift"}, {"type": "qcode", "data": "g"}]}}' | nc localhost 4444
-   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "a"}]}}' | nc localhost 4444
-   # ... type remaining characters ...
-   echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "ret"}]}}' | nc localhost 4444
-   ```
+# Type the command (each key separately)
+for key in d e b u g b o x spc m y g a m e dot e x e ret; do
+  echo "{\"execute\": \"send-key\", \"arguments\": {\"keys\": [{\"type\": \"qcode\", \"data\": \"$key\"}]}}" | nc localhost 4444
+  sleep 0.05
+done
+```
 
-4. When the program starts, GDB receives the breakpoint notification.
+Terminal 1 - GDB receives breakpoint:
+```
+(gdb) info registers
+eax    0x0      0
+...
+eip    0x8240   0x8240    # Linear address
+cs     0x824    0x824     # Code segment
+...
+# Offset = 0x8240 - (0x824 * 16) = 0x0000 (EXE entry point)
+```
+
+### Option 2: QMP debug-break-on-exec
+
+For automation without using the DEBUGBOX command:
+
+**Important**: Connect GDB BEFORE enabling debug-break-on-exec to receive S05.
+
+#### Complete Example
+
+```bash
+#!/bin/bash
+# debug_program.sh - Debug a DOS program at entry point
+
+PROGRAM="MYGAME.EXE"
+QMP_PORT=4444
+GDB_PORT=2159
+
+# Step 1: Connect GDB in background (must be first!)
+(echo "target remote localhost:$GDB_PORT" | gdb -batch -x -) &
+GDB_PID=$!
+sleep 0.5
+
+# Step 2: Initialize QMP and enable break-on-exec
+{
+  echo '{"execute": "qmp_capabilities"}'
+  sleep 0.1
+  echo '{"execute": "debug-break-on-exec", "arguments": {"enabled": true}}'
+  sleep 0.1
+} | nc localhost $QMP_PORT
+
+# Step 3: Type the program name
+for char in $(echo "$PROGRAM" | grep -o .); do
+  key=$(echo "$char" | tr '[:upper:]' '[:lower:]')
+  case "$char" in
+    .) key="dot" ;;
+    " ") key="spc" ;;
+  esac
+  echo "{\"execute\": \"send-key\", \"arguments\": {\"keys\": [{\"type\": \"qcode\", \"data\": \"$key\"}]}}" | nc localhost $QMP_PORT
+  sleep 0.05
+done
+
+# Step 4: Press Enter to execute
+echo '{"execute": "send-key", "arguments": {"keys": [{"type": "qcode", "data": "ret"}]}}' | nc localhost $QMP_PORT
+
+# GDB will receive S05 when program entry breakpoint is hit
+wait $GDB_PID
+```
+
+#### Python Example
+
+```python
+#!/usr/bin/env python3
+"""Debug a DOS program at its entry point."""
+import socket
+import json
+import time
+
+def qmp_command(sock, cmd, args=None):
+    """Send QMP command and return response."""
+    msg = {"execute": cmd}
+    if args:
+        msg["arguments"] = args
+    sock.send((json.dumps(msg) + "\n").encode())
+    return json.loads(sock.recv(4096).decode())
+
+def type_text(sock, text):
+    """Type text via QMP send-key."""
+    keymap = {'.': 'dot', ' ': 'spc', '\n': 'ret'}
+    for char in text:
+        key = keymap.get(char, char.lower())
+        qmp_command(sock, "send-key", {
+            "keys": [{"type": "qcode", "data": key}]
+        })
+        time.sleep(0.05)
+
+# Connect GDB first (critical!)
+gdb = socket.socket()
+gdb.connect(("localhost", 2159))
+gdb.recv(1024)  # Receive any greeting
+
+# Connect QMP
+qmp = socket.socket()
+qmp.connect(("localhost", 4444))
+qmp.recv(1024)  # Greeting
+qmp_command(qmp, "qmp_capabilities")
+
+# Enable break-on-exec
+qmp_command(qmp, "debug-break-on-exec", {"enabled": True})
+
+# Type program name and press Enter
+type_text(qmp, "MYGAME.EXE\n")
+
+# Wait for S05 from GDB
+gdb.settimeout(5.0)
+response = gdb.recv(1024)
+print(f"GDB received: {response}")  # Should contain $S05#b8
+
+# Now you can read registers, set breakpoints, etc.
+gdb.send(b"$g#67")  # Read all registers
+print(gdb.recv(4096))
+```
 
 ---
 
