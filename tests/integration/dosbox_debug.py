@@ -66,7 +66,15 @@ class Registers:
 
 
 class GDBClient:
-    """Simple GDB Remote Serial Protocol client."""
+    """Simple GDB Remote Serial Protocol client with DOS video memory support."""
+
+    # VGA text mode video memory
+    VIDEO_MEM_ADDR = 0xB8000
+    VIDEO_MEM_SIZE = 4000  # 80x25x2 bytes
+
+    # BIOS data area addresses
+    BIOS_TIMER_TICKS = 0x46C  # 32-bit timer tick count
+    BIOS_VIDEO_MODE = 0x449  # Current video mode
 
     def __init__(self, host: str = "localhost", port: int = 2159, timeout: float = 5.0):
         self.host = host
@@ -356,6 +364,75 @@ class GDBClient:
         """Detach from target."""
         return self._send_packet("D")
 
+    # =========================================================================
+    # Video Memory Methods
+    # =========================================================================
+
+    def screen_raw(self) -> bytes:
+        """Read raw video memory (character + attribute pairs)."""
+        return self.read_memory(self.VIDEO_MEM_ADDR, self.VIDEO_MEM_SIZE)
+
+    def screen_dump(self, width: int = 80, height: int = 25) -> list:
+        """Read screen as list of text lines (characters only)."""
+        raw = self.screen_raw()
+        lines = []
+        for row in range(height):
+            line = ""
+            for col in range(width):
+                offset = (row * width + col) * 2
+                if offset < len(raw):
+                    char = raw[offset]
+                    # Convert to printable character
+                    if 32 <= char < 127:
+                        line += chr(char)
+                    else:
+                        line += " "
+            lines.append(line.rstrip())
+        return lines
+
+    def screen_line(self, row: int = 24, width: int = 80) -> str:
+        """Get a single screen line."""
+        lines = self.screen_dump(width, row + 1)
+        return lines[row] if row < len(lines) else ""
+
+    def screen_dump_with_ticks(self, width: int = 80, height: int = 25) -> tuple:
+        """Read screen and timer ticks atomically."""
+        lines = self.screen_dump(width, height)
+        ticks = self.read_timer_ticks()
+        return lines, ticks
+
+    def screen_debug(self, width: int = 80, height: int = 25) -> list:
+        """Read screen with full debug info (char, attribute, decoded)."""
+        raw = self.screen_raw()
+        result = []
+        for row in range(height):
+            row_data = []
+            for col in range(width):
+                offset = (row * width + col) * 2
+                if offset + 1 < len(raw):
+                    char = raw[offset]
+                    attr = raw[offset + 1]
+                    row_data.append({
+                        "char": chr(char) if 32 <= char < 127 else ".",
+                        "code": char,
+                        "attr": attr,
+                        "attr_info": decode_vga_attribute(attr),
+                    })
+            result.append(row_data)
+        return result
+
+    def read_video_mode(self) -> int:
+        """Read current video mode from BIOS data area."""
+        data = self.read_memory(self.BIOS_VIDEO_MODE, 1)
+        return data[0] if data else 0
+
+    def read_timer_ticks(self) -> int:
+        """Read BIOS timer tick count (18.2 Hz)."""
+        data = self.read_memory(self.BIOS_TIMER_TICKS, 4)
+        if len(data) >= 4:
+            return int.from_bytes(data, byteorder="little")
+        return 0
+
 
 class QMPClient:
     """Simple QMP (QEMU Monitor Protocol) client."""
@@ -567,7 +644,7 @@ def qmp_connection(host: str = "localhost", port: int = 4444, timeout: float = 5
 
 
 # =============================================================================
-# Video Tools
+# VGA Attribute Helpers
 # =============================================================================
 
 @dataclass
@@ -621,101 +698,6 @@ def format_attribute_info(attr: int) -> str:
     return " ".join(parts)
 
 
-class DOSVideoTools:
-    """Video memory access tools using GDB client."""
-
-    # VGA text mode video memory
-    VIDEO_MEM_ADDR = 0xB8000
-    VIDEO_MEM_SIZE = 4000  # 80x25x2 bytes
-
-    # BIOS data area addresses
-    BIOS_TIMER_TICKS = 0x46C  # 32-bit timer tick count
-    BIOS_VIDEO_MODE = 0x449  # Current video mode
-
-    def __init__(self, host: str = "localhost", port: int = 2159, timeout: float = 5.0):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
-        self._gdb: Optional[GDBClient] = None
-
-    def __enter__(self):
-        self._gdb = GDBClient(host=self.host, port=self.port, timeout=self.timeout)
-        self._gdb.connect()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._gdb:
-            self._gdb.close()
-            self._gdb = None
-        return False
-
-    def screen_raw(self) -> bytes:
-        """Read raw video memory (character + attribute pairs)."""
-        if not self._gdb:
-            raise GDBError("Not connected")
-        return self._gdb.read_memory(self.VIDEO_MEM_ADDR, self.VIDEO_MEM_SIZE)
-
-    def screen_dump(self, width: int = 80, height: int = 25) -> list:
-        """Read screen as list of text lines (characters only)."""
-        raw = self.screen_raw()
-        lines = []
-        for row in range(height):
-            line = ""
-            for col in range(width):
-                offset = (row * width + col) * 2
-                if offset < len(raw):
-                    char = raw[offset]
-                    # Convert to printable character
-                    if 32 <= char < 127:
-                        line += chr(char)
-                    else:
-                        line += " "
-            lines.append(line.rstrip())
-        return lines
-
-    def screen_dump_with_ticks(self, width: int = 80, height: int = 25) -> tuple:
-        """Read screen and timer ticks atomically."""
-        lines = self.screen_dump(width, height)
-        ticks = self.read_timer_ticks()
-        return lines, ticks
-
-    def screen_debug(self, width: int = 80, height: int = 25) -> list:
-        """Read screen with full debug info (char, attribute, decoded)."""
-        raw = self.screen_raw()
-        result = []
-        for row in range(height):
-            row_data = []
-            for col in range(width):
-                offset = (row * width + col) * 2
-                if offset + 1 < len(raw):
-                    char = raw[offset]
-                    attr = raw[offset + 1]
-                    row_data.append({
-                        "char": chr(char) if 32 <= char < 127 else ".",
-                        "code": char,
-                        "attr": attr,
-                        "attr_info": decode_vga_attribute(attr),
-                    })
-            result.append(row_data)
-        return result
-
-    def read_video_mode(self) -> int:
-        """Read current video mode from BIOS data area."""
-        if not self._gdb:
-            raise GDBError("Not connected")
-        data = self._gdb.read_memory(self.BIOS_VIDEO_MODE, 1)
-        return data[0] if data else 0
-
-    def read_timer_ticks(self) -> int:
-        """Read BIOS timer tick count (18.2 Hz)."""
-        if not self._gdb:
-            raise GDBError("Not connected")
-        data = self._gdb.read_memory(self.BIOS_TIMER_TICKS, 4)
-        if len(data) >= 4:
-            return int.from_bytes(data, byteorder="little")
-        return 0
-
-
 # =============================================================================
 # DOSBox-X Instance Manager
 # =============================================================================
@@ -757,7 +739,6 @@ class DOSBoxInstance:
         self._process: Optional[subprocess.Popen] = None
         self._gdb: Optional[GDBClient] = None
         self._qmp: Optional[QMPClient] = None
-        self._video: Optional[DOSVideoTools] = None
 
     def __enter__(self):
         self.start()
@@ -812,8 +793,6 @@ class DOSBoxInstance:
             except:
                 pass
             self._qmp = None
-
-        self._video = None
 
         # Stop process
         if self._process:
@@ -880,26 +859,13 @@ class DOSBoxInstance:
             raise RuntimeError("DOSBox-X not running")
         return self._qmp
 
-    @property
-    def video(self) -> DOSVideoTools:
-        """Get video tools (shares GDB connection)."""
-        if not self._gdb:
-            raise RuntimeError("DOSBox-X not running")
-        if not self._video:
-            # Create video tools that uses existing GDB connection
-            self._video = DOSVideoTools.__new__(DOSVideoTools)
-            self._video._gdb = self._gdb
-            self._video._owns_connection = False
-        return self._video
-
     def screen_dump(self, width: int = 80, height: int = 25) -> list:
-        """Convenience method to dump screen."""
-        return self.video.screen_dump(width, height)
+        """Read screen as list of text lines."""
+        return self.gdb.screen_dump(width, height)
 
     def screen_line(self, row: int = 24, width: int = 80) -> str:
         """Get a single screen line."""
-        lines = self.screen_dump(width, row + 1)
-        return lines[row] if row < len(lines) else ""
+        return self.gdb.screen_line(row, width)
 
     def halt(self):
         """Halt the CPU via GDB."""
