@@ -4844,9 +4844,21 @@ void DEBUG_Enable_Handler(bool pressed) {
 #if C_REMOTEDEBUG
     // Check for mutual exclusion with GDB client
     if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
-        LOG(LOG_REMOTE, LOG_WARN)("DEBUG: Interactive debugger blocked - GDB client is connected");
-        DEBUG_ShowMsg("Interactive debugger unavailable: GDB client is connected.\n");
-        DEBUG_ShowMsg("Disconnect GDB client first, or use GDB for debugging.\n");
+        // GDB client is connected - notify it about the breakpoint/stop
+        // This handles both breakpoint hits and user-initiated debug breaks
+        if (!debugging) {
+            LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit - signaling to GDB client");
+            gdbServer->send_stop_reply(5);  // SIGTRAP
+            gdb_cpu_paused = true;  // Pause CPU until GDB sends continue/step
+            // Clear the GDB break on exec flag if it was set
+            if (gdb_break_on_exec) {
+                gdb_break_on_exec = false;
+            }
+        } else {
+            LOG(LOG_REMOTE, LOG_WARN)("DEBUG: Interactive debugger blocked - GDB client is connected");
+            DEBUG_ShowMsg("Interactive debugger unavailable: GDB client is connected.\n");
+            DEBUG_ShowMsg("Disconnect GDB client first, or use GDB for debugging.\n");
+        }
         return;
     }
 #endif
@@ -4928,21 +4940,6 @@ void DEBUG_Enable_Handler(bool pressed) {
 
     if (!debugging) {
         printf("Breakpoint hit! Entering debugger.\n");
-#if C_REMOTEDEBUG
-        // Check if GDB client is connected - if so, GDB takes control
-        if (gdbServer != nullptr && gdbServer->is_running() && gdbServer->has_client()) {
-            // If GDB server has a client, signal the breakpoint and pause for GDB
-            // without entering the debugger UI - GDB client is in control
-            LOG(LOG_REMOTE, LOG_DEBUG)("DEBUG: Breakpoint hit - signaling to GDB client");
-            gdbServer->send_stop_reply(5);  // SIGTRAP
-            gdb_cpu_paused = true;  // Pause CPU until GDB sends continue/step
-            // Clear the GDB break on exec flag if it was set
-            if (gdb_break_on_exec) {
-                gdb_break_on_exec = false;
-            }
-            return;  // Don't enter debugger UI
-        }
-#endif
     }
 
     debugging=true;
