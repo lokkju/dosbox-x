@@ -287,8 +287,70 @@ class GDBClient:
         return self._send_packet("s")
 
     def continue_(self) -> str:
-        """Continue execution."""
-        return self._send_packet("c")
+        """Continue execution.
+
+        Note: GDB 'c' command has no immediate response - it only sends S05
+        when execution stops (breakpoint, halt, etc.). So we just send the
+        packet and wait for ACK, not a full response.
+        """
+        if not self._socket:
+            raise GDBError("Not connected")
+
+        # Send continue packet
+        checksum = self._checksum("c")
+        packet = f"$c#{checksum:02x}"
+        self._socket.send(packet.encode())
+
+        # Just read ACK, don't wait for response packet
+        old_timeout = self._socket.gettimeout()
+        self._socket.settimeout(0.5)
+        try:
+            ack = self._socket.recv(1)
+            return ack.decode() if ack == b"+" else ""
+        except socket.timeout:
+            return ""
+        finally:
+            self._socket.settimeout(old_timeout)
+
+    def wait_for_stop(self, timeout: float = 5.0) -> str:
+        """Wait for a stop reply (S05) after continue.
+
+        Args:
+            timeout: How long to wait for stop reply
+
+        Returns:
+            The stop reply (e.g., "S05") or empty string if timeout
+        """
+        if not self._socket:
+            raise GDBError("Not connected")
+
+        old_timeout = self._socket.gettimeout()
+        self._socket.settimeout(timeout)
+        try:
+            response = b""
+            while True:
+                chunk = self._socket.recv(4096)
+                if not chunk:
+                    break
+                response += chunk
+                # Look for stop reply packet
+                if b"$" in response and b"#" in response:
+                    idx = response.rfind(b"#")
+                    if len(response) >= idx + 3:
+                        break
+
+            response_str = response.decode()
+            if response_str.startswith("+"):
+                response_str = response_str[1:]
+            if "$" in response_str and "#" in response_str:
+                start = response_str.index("$") + 1
+                end = response_str.rindex("#")
+                return response_str[start:end]
+            return response_str
+        except socket.timeout:
+            return ""
+        finally:
+            self._socket.settimeout(old_timeout)
 
     def detach(self) -> str:
         """Detach from target."""
@@ -413,7 +475,7 @@ class QMPClient:
         time.sleep(hold_time)
         return self.key_up(key)
 
-    def type_text(self, text: str, delay: float = 0.05):
+    def type_text(self, text: str, delay: float = 0.1):
         """Type text character by character.
 
         This implementation sends each character separately with a delay,
@@ -652,3 +714,252 @@ class DOSVideoTools:
         if len(data) >= 4:
             return int.from_bytes(data, byteorder="little")
         return 0
+
+
+# =============================================================================
+# DOSBox-X Instance Manager
+# =============================================================================
+
+import subprocess
+import os
+import signal
+
+class DOSBoxInstance:
+    """Context manager for running DOSBox-X instances.
+
+    Usage:
+        with DOSBoxInstance() as dbx:
+            dbx.gdb.read_registers()
+            dbx.qmp.type_text("DIR\\r")
+            lines = dbx.screen_dump()
+    """
+
+    DEFAULT_EXECUTABLE = "./src/dosbox-x"
+    DEFAULT_CONFIG = "tests/integration/test.conf"
+    DEFAULT_GDB_PORT = 2159
+    DEFAULT_QMP_PORT = 4444
+    STARTUP_TIMEOUT = 5.0
+
+    def __init__(
+        self,
+        executable: str = None,
+        config: str = None,
+        gdb_port: int = None,
+        qmp_port: int = None,
+        working_dir: str = None,
+    ):
+        self.executable = executable or self.DEFAULT_EXECUTABLE
+        self.config = config or self.DEFAULT_CONFIG
+        self.gdb_port = gdb_port or self.DEFAULT_GDB_PORT
+        self.qmp_port = qmp_port or self.DEFAULT_QMP_PORT
+        self.working_dir = working_dir
+
+        self._process: Optional[subprocess.Popen] = None
+        self._gdb: Optional[GDBClient] = None
+        self._qmp: Optional[QMPClient] = None
+        self._video: Optional[DOSVideoTools] = None
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.stop()
+        return False
+
+    def start(self):
+        """Start DOSBox-X and connect clients."""
+        # Kill any existing instances first
+        self._kill_existing()
+
+        # Start DOSBox-X
+        cmd = [self.executable, "-conf", self.config]
+        kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "start_new_session": True,
+        }
+        if self.working_dir:
+            kwargs["cwd"] = self.working_dir
+
+        self._process = subprocess.Popen(cmd, **kwargs)
+
+        # Wait for servers to be available
+        if not self._wait_for_servers():
+            self.stop()
+            raise RuntimeError("DOSBox-X failed to start or servers not available")
+
+        # Connect clients
+        self._gdb = GDBClient(port=self.gdb_port)
+        self._gdb.connect()
+
+        self._qmp = QMPClient(port=self.qmp_port)
+        self._qmp.connect()
+
+    def stop(self):
+        """Stop DOSBox-X and close connections."""
+        # Close clients
+        if self._gdb:
+            try:
+                self._gdb.close()
+            except:
+                pass
+            self._gdb = None
+
+        if self._qmp:
+            try:
+                self._qmp.close()
+            except:
+                pass
+            self._qmp = None
+
+        self._video = None
+
+        # Stop process
+        if self._process:
+            try:
+                os.killpg(os.getpgid(self._process.pid), signal.SIGKILL)
+            except:
+                try:
+                    self._process.kill()
+                except:
+                    pass
+            self._process = None
+
+    def _kill_existing(self):
+        """Kill any existing DOSBox-X processes."""
+        try:
+            subprocess.run(
+                ["pkill", "-9", "-f", "dosbox-x"],
+                capture_output=True,
+                timeout=2.0,
+            )
+            time.sleep(0.5)
+        except:
+            pass
+
+    def _wait_for_servers(self) -> bool:
+        """Wait for GDB and QMP servers to become available."""
+        deadline = time.time() + self.STARTUP_TIMEOUT
+
+        while time.time() < deadline:
+            if self._process.poll() is not None:
+                # Process exited
+                return False
+
+            try:
+                # Try QMP
+                sock = socket.socket()
+                sock.settimeout(0.5)
+                sock.connect(("localhost", self.qmp_port))
+                sock.close()
+
+                # Try GDB
+                sock = socket.socket()
+                sock.settimeout(0.5)
+                sock.connect(("localhost", self.gdb_port))
+                sock.close()
+
+                return True
+            except:
+                time.sleep(0.2)
+
+        return False
+
+    @property
+    def gdb(self) -> GDBClient:
+        """Get the GDB client."""
+        if not self._gdb:
+            raise RuntimeError("DOSBox-X not running")
+        return self._gdb
+
+    @property
+    def qmp(self) -> QMPClient:
+        """Get the QMP client."""
+        if not self._qmp:
+            raise RuntimeError("DOSBox-X not running")
+        return self._qmp
+
+    @property
+    def video(self) -> DOSVideoTools:
+        """Get video tools (shares GDB connection)."""
+        if not self._gdb:
+            raise RuntimeError("DOSBox-X not running")
+        if not self._video:
+            # Create video tools that uses existing GDB connection
+            self._video = DOSVideoTools.__new__(DOSVideoTools)
+            self._video._gdb = self._gdb
+            self._video._owns_connection = False
+        return self._video
+
+    def screen_dump(self, width: int = 80, height: int = 25) -> list:
+        """Convenience method to dump screen."""
+        return self.video.screen_dump(width, height)
+
+    def screen_line(self, row: int = 24, width: int = 80) -> str:
+        """Get a single screen line."""
+        lines = self.screen_dump(width, row + 1)
+        return lines[row] if row < len(lines) else ""
+
+    def halt(self):
+        """Halt the CPU via GDB."""
+        return self.gdb.halt()
+
+    def continue_(self):
+        """Continue execution via GDB."""
+        return self.gdb.continue_()
+
+    def wait_for_stop(self, timeout: float = 5.0) -> str:
+        """Wait for execution to stop (e.g., breakpoint hit)."""
+        return self.gdb.wait_for_stop(timeout)
+
+    def query_status(self) -> dict:
+        """Query emulator status via QMP."""
+        return self.qmp.query_status()
+
+    def type_text(self, text: str, delay: float = 0.15):
+        """Type text via QMP.
+
+        Args:
+            text: Text to type. Use \\r for Enter.
+            delay: Delay between keystrokes (default 0.15s for reliability)
+        """
+        self.qmp.type_text(text, delay)
+
+    def run_command(self, command: str, wait_after: float = 0.5, verify: bool = True):
+        """Type a DOS command and press Enter.
+
+        Args:
+            command: The command to run (without Enter)
+            wait_after: Time to wait after pressing Enter
+            verify: If True, verify command appeared on screen before pressing Enter
+
+        Raises:
+            RuntimeError: If verify=True and command didn't appear on screen
+        """
+        # Type command
+        self.type_text(command)
+
+        if verify:
+            # Halt and check screen
+            time.sleep(0.2)
+            self.halt()
+            time.sleep(0.1)
+            line = self.screen_line(24)
+            self.continue_()
+            time.sleep(0.1)
+
+            # Verify command appeared
+            if command.upper() not in line.upper():
+                raise RuntimeError(
+                    f"Command '{command}' not visible on screen. "
+                    f"Screen shows: [{line}]"
+                )
+
+        # Press Enter
+        self.type_text("\r")
+        time.sleep(wait_after)
+
+    def debug_break_on_exec(self, enabled: bool = True) -> dict:
+        """Enable/disable break-on-exec."""
+        return self.qmp.debug_break_on_exec(enabled)
