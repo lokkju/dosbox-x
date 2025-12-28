@@ -105,20 +105,23 @@ def qmp_raw_command(command: str, args: dict = None, host: str = QMP_HOST, port:
 
 @contextmanager
 def gdb_connection(host: str = GDB_HOST, port: int = GDB_PORT):
-    """Context manager that detaches before closing to clean up debugger UI."""
+    """Context manager that resumes and detaches before closing."""
     with GDBClient(host=host, port=port) as client:
         try:
             yield client
         finally:
-            # Send detach to close debugger UI before disconnecting
+            # Resume execution and detach to leave server in clean state
             try:
+                # Try to continue execution first (in case CPU is paused)
+                if hasattr(client, '_send_packet'):
+                    try:
+                        client._socket.settimeout(0.5)
+                        client._send_packet('c')
+                    except:
+                        pass
+                # Then detach
                 if hasattr(client, 'detach'):
                     client.detach()
-                elif hasattr(client, 'send_packet'):
-                    client.send_packet('D')
-                elif hasattr(client, '_socket'):
-                    packet = b'$D#44'
-                    client._socket.send(packet)
             except Exception:
                 pass
 
@@ -707,19 +710,27 @@ class TestRemoteDebugIntegration:
                 commands = qmp.query_commands()
                 assert commands is not None
 
-    def test_qmp_stop_reflects_in_gdb(self, servers_available):
-        """Pausing via QMP stop should be visible to GDB."""
+    def test_qmp_stop_and_query_status(self, servers_available):
+        """Pausing via QMP stop should be visible via QMP query-status."""
         # Stop via QMP
         qmp_raw_command("stop")
-        time.sleep(0.2)
+        time.sleep(0.1)
 
-        # GDB should be able to read registers (implies paused or pauseable)
-        with gdb_connection(GDB_HOST, GDB_PORT) as gdb:
-            regs = gdb.read_registers()
-            assert regs is not None
+        # Check status via QMP - should show paused
+        status = qmp_raw_command("query-status")
+        result = status.get('return', {})
+        assert result.get('status') == 'paused', f"Expected status='paused', got {result}"
+        assert result.get('running') is False, "Expected running=false when stopped"
 
         # Resume via QMP
         qmp_raw_command("cont")
+        time.sleep(0.1)
+
+        # Check status again - should show running
+        status = qmp_raw_command("query-status")
+        result = status.get('return', {})
+        assert result.get('status') == 'running', f"Expected status='running', got {result}"
+        assert result.get('running') is True, "Expected running=true after cont"
 
     def test_gdb_registers_valid_during_pause(self, servers_available):
         """Register values should be valid and consistent when paused."""

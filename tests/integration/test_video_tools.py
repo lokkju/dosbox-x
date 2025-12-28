@@ -207,8 +207,9 @@ class TestVGAAttributes:
         """Decode basic attribute byte."""
         # 0x07 = white on black (standard DOS)
         info = decode_vga_attribute(0x07)
-        assert isinstance(info, dict)
-        assert "foreground" in info or "fg" in info or len(info) > 0
+        assert info is not None
+        # Should have foreground color info (supports dataclass or dict)
+        assert hasattr(info, 'foreground') or 'foreground' in info
 
     def test_decode_attribute_colors(self):
         """Decode various color combinations."""

@@ -47,6 +47,14 @@ class Registers:
         """Allow dict-like access for compatibility."""
         return getattr(self, key)
 
+    def __contains__(self, key):
+        """Support 'in' operator for dict-like compatibility."""
+        return key in self.keys()
+
+    def __iter__(self):
+        """Allow iteration over register names."""
+        return iter(self.keys())
+
     def get(self, key, default=None):
         """Allow dict-like get() for compatibility."""
         return getattr(self, key, default)
