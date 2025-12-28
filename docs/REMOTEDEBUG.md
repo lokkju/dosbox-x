@@ -228,7 +228,7 @@ For manual or custom automation:
 
 ## Integration Tests
 
-Integration tests use Python with the [dbxdebug](https://pypi.org/project/dbxdebug/) client library. Tests are self-contained scripts using [PEP 723](https://peps.python.org/pep-0723/) inline metadata for dependency management.
+Integration tests are self-contained Python scripts using [PEP 723](https://peps.python.org/pep-0723/) inline metadata for dependency management. The tests include a local `dosbox_debug.py` module with GDB and QMP client implementations.
 
 ### Requirements
 

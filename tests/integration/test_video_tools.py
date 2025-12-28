@@ -2,7 +2,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "dbxdebug>=0.2.1",
 #     "pytest>=8.0",
 # ]
 # ///
@@ -26,8 +25,7 @@ import sys
 import time
 
 import pytest
-from dbxdebug.gdb import GDBClient
-from dbxdebug.video import DOSVideoTools, decode_vga_attribute, format_attribute_info
+from dosbox_debug import GDBClient, DOSVideoTools, decode_vga_attribute, format_attribute_info
 
 # Test configuration
 GDB_HOST = "localhost"

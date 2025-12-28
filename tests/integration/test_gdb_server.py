@@ -2,7 +2,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "dbxdebug>=0.2.1",
 #     "pytest>=8.0",
 # ]
 # ///
@@ -23,32 +22,9 @@ Or with pytest:
 import socket
 import sys
 import time
-from contextlib import contextmanager
 
 import pytest
-from dbxdebug.gdb import GDBClient
-
-
-@contextmanager
-def gdb_connection(host: str = "localhost", port: int = 2159):
-    """Context manager that detaches before closing to clean up debugger UI."""
-    with GDBClient(host=host, port=port) as client:
-        try:
-            yield client
-        finally:
-            # Send detach to close debugger UI before disconnecting
-            try:
-                if hasattr(client, 'detach'):
-                    client.detach()
-                elif hasattr(client, 'send_packet'):
-                    # Send raw detach packet
-                    client.send_packet('D')
-                elif hasattr(client, '_socket'):
-                    # Last resort: send raw GDB packet directly
-                    packet = b'$D#44'  # D with checksum
-                    client._socket.send(packet)
-            except Exception as e:
-                print(f"Warning: detach failed: {e}")
+from dosbox_debug import GDBClient, gdb_connection
 
 # Test configuration
 GDB_HOST = "localhost"
@@ -133,11 +109,10 @@ class TestRegisters:
         """Read all 16 registers via 'g' packet."""
         regs = gdb.read_registers()
         assert regs is not None
-        assert isinstance(regs, dict)
-        # Should have all expected registers
+        # Should have all expected registers (supports dict-like access)
         for name in self.REGISTER_NAMES:
-            assert name in regs, f"Missing register: {name}"
-            assert isinstance(regs[name], int)
+            value = regs[name] if hasattr(regs, '__getitem__') else getattr(regs, name)
+            assert isinstance(value, int)
 
     def test_read_single_register(self, gdb):
         """Read individual registers via 'p' packet."""

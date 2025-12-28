@@ -2,7 +2,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "dbxdebug>=0.2.1",
 #     "pytest>=8.0",
 # ]
 # ///
@@ -34,8 +33,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
-from dbxdebug.gdb import GDBClient
-from dbxdebug.qmp import QMPClient, QMPError
+from dosbox_debug import GDBClient, QMPClient, QMPError
 
 
 # Test configuration

@@ -2,7 +2,6 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "dbxdebug>=0.2.1",
 #     "pytest>=8.0",
 # ]
 # ///
@@ -25,7 +24,7 @@ import sys
 import time
 
 import pytest
-from dbxdebug.qmp import QMPClient, QMPError
+from dosbox_debug import QMPClient, QMPError
 
 # Test configuration
 QMP_HOST = "localhost"
