@@ -423,6 +423,7 @@ class QMPClient:
         special_keys = {
             " ": "spc",
             "\n": "ret",
+            "\r": "ret",  # Carriage return also maps to Enter
             "\t": "tab",
             ".": "dot",
             ",": "comma",
